@@ -759,9 +759,15 @@ func TestNewPkgInstallFactory_CreatesHomebrewManagerOnDarwin(t *testing.T) {
 		},
 	}
 
+	// Mock PathFinder to return consistent "brew" path for testing
+	mockPathFinder := func() (string, bool) {
+		return "brew", true
+	}
+
 	factory := NewPkgInstallFactory(PkgInstallConfig{
-		OS:     "darwin",
-		Runner: mockRunner,
+		OS:         "darwin",
+		Runner:     mockRunner,
+		PathFinder: mockPathFinder,
 	})
 
 	tasks, err := factory(args)

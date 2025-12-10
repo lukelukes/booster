@@ -428,9 +428,10 @@ func formatInstallStats(category string, skipped, installed int) string {
 
 // PkgInstallConfig holds the factory configuration.
 type PkgInstallConfig struct {
-	Runner  cmdexec.Runner
-	Manager PackageManager
-	OS      string
+	Runner     cmdexec.Runner
+	Manager    PackageManager
+	OS         string
+	PathFinder BrewPathFinder // Optional: for testing brew path discovery
 }
 
 // NewPkgInstallFactory creates a factory for PkgInstall tasks.
@@ -464,7 +465,7 @@ func NewPkgInstallFactory(cfg PkgInstallConfig) Factory {
 		manager := cfg.Manager
 		if manager == nil {
 			if cfg.OS == "darwin" {
-				manager = NewHomebrewManager(cfg.Runner, nil)
+				manager = NewHomebrewManager(cfg.Runner, cfg.PathFinder)
 			} else {
 				manager = NewPacmanManager(cfg.Runner)
 			}

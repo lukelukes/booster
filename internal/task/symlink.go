@@ -18,9 +18,23 @@ func (t *SymlinkCreate) Name() string {
 	return fmt.Sprintf("link %s → %s", t.Source, t.Target)
 }
 
+// NeedsSudo returns false - symlink creation in user space doesn't need sudo.
+func (t *SymlinkCreate) NeedsSudo() bool {
+	return false
+}
+
 func (t *SymlinkCreate) Run(ctx context.Context) Result {
 	source := pathutil.Expand(t.Source)
 	target := pathutil.Expand(t.Target)
+
+	// Convert source to absolute path - relative symlinks resolve from the link location, not CWD
+	if !filepath.IsAbs(source) {
+		var err error
+		source, err = filepath.Abs(source)
+		if err != nil {
+			return Result{Status: StatusFailed, Error: fmt.Errorf("failed to resolve source path: %w", err)}
+		}
+	}
 
 	// 1. Check if source exists
 	if _, err := os.Stat(source); err != nil {

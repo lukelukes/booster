@@ -283,6 +283,7 @@ func TestNewPkgManagerInstall(t *testing.T) {
 func TestPkgManagerInstall_Homebrew(t *testing.T) {
 	tests := []struct {
 		name            string
+		brewPathFinder  BrewPathFinder // Override findBrewPath for this test
 		lookPath        func(string) (string, error)
 		runFunc         func(context.Context, string, ...string) ([]byte, error)
 		wantStatus      Status
@@ -294,11 +295,8 @@ func TestPkgManagerInstall_Homebrew(t *testing.T) {
 	}{
 		{
 			name: "skips when already installed",
-			lookPath: func(name string) (string, error) {
-				if name == "brew" {
-					return "/opt/homebrew/bin/brew", nil
-				}
-				return "", errors.New("not found")
+			brewPathFinder: func() (string, bool) {
+				return "/opt/homebrew/bin/brew", true // Simulate brew found
 			},
 			runFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				return nil, errors.New("unexpected command")
@@ -309,8 +307,8 @@ func TestPkgManagerInstall_Homebrew(t *testing.T) {
 		},
 		{
 			name: "installs when missing",
-			lookPath: func(name string) (string, error) {
-				return "", errors.New("not found")
+			brewPathFinder: func() (string, bool) {
+				return "", false // Simulate brew not found
 			},
 			runFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				if name == "curl" {
@@ -329,8 +327,8 @@ func TestPkgManagerInstall_Homebrew(t *testing.T) {
 		},
 		{
 			name: "fails when curl fails",
-			lookPath: func(name string) (string, error) {
-				return "", errors.New("not found")
+			brewPathFinder: func() (string, bool) {
+				return "", false // Simulate brew not found
 			},
 			runFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				if name == "curl" {
@@ -343,8 +341,8 @@ func TestPkgManagerInstall_Homebrew(t *testing.T) {
 		},
 		{
 			name: "fails when install script fails",
-			lookPath: func(name string) (string, error) {
-				return "", errors.New("not found")
+			brewPathFinder: func() (string, bool) {
+				return "", false // Simulate brew not found
 			},
 			runFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				if name == "curl" {
@@ -382,7 +380,11 @@ func TestPkgManagerInstall_Homebrew(t *testing.T) {
 				RunFunc:      wrappedRunFunc,
 			}
 
-			task := &PkgManagerInstall{Manager: "homebrew", Runner: mock}
+			task := &PkgManagerInstall{
+				Manager:    "homebrew",
+				Runner:     mock,
+				PathFinder: tt.brewPathFinder,
+			}
 			result := task.Run(context.Background())
 
 			assert.Equal(t, tt.wantStatus, result.Status)

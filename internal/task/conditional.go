@@ -30,6 +30,11 @@ func (t *ConditionalTask) Name() string {
 	return t.wrapped.Name()
 }
 
+// NeedsSudo delegates to the wrapped task.
+func (t *ConditionalTask) NeedsSudo() bool {
+	return t.wrapped.NeedsSudo()
+}
+
 // Run executes the task if the condition matches, otherwise returns StatusSkipped.
 func (t *ConditionalTask) Run(ctx context.Context) Result {
 	if !t.evaluator.Matches(t.condition) {

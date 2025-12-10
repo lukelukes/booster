@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
 
 	"github.com/alecthomas/kong"
@@ -65,18 +64,10 @@ func (c *RunCmd) Run(cli *CLI) error {
 	sysCtx := detector.Detect()
 	sysCtx.Profile = profile
 
-	// Check if any tasks need sudo and prompt if needed (before TUI starts)
-	// Skip sudo prompt in dry-run mode
-	if !c.DryRun && needsSudo(cfg.Tasks) {
-		if sudoErr := ensureSudo(); sudoErr != nil {
-			return fmt.Errorf("sudo required: %w", sudoErr)
-		}
-	}
-
 	// Get config directory for resolving relative paths
 	configDir := filepath.Dir(cli.Config)
 
-	// Build tasks with resolved variables
+	// Build tasks first - tasks know their own sudo requirements
 	builder := task.DefaultBuilder(sysCtx)
 	builder.Register("template.render", task.NewTemplateRenderFactory(task.TemplateRenderConfig{
 		Vars:    vars,
@@ -116,9 +107,17 @@ func (c *RunCmd) Run(cli *CLI) error {
 		return nil
 	}
 
-	// Run TUI
+	// Check if any tasks need sudo and prompt if needed (before TUI starts)
+	// Tasks self-declare their sudo requirements via NeedsSudo()
+	if task.AnyNeedsSudo(tasks) {
+		if sudoErr := ensureSudo(); sudoErr != nil {
+			return fmt.Errorf("sudo required: %w", sudoErr)
+		}
+	}
+
+	// Run TUI with mouse support for scrolling
 	model := tui.New(tasks)
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)
@@ -199,21 +198,6 @@ func validateProfile(configured []string, flag string) (string, error) {
 	}
 
 	return flag, nil
-}
-
-// needsSudo returns true if any task has prompt_for_sudo: true.
-func needsSudo(tasks []config.Task) bool {
-	// macOS uses Homebrew which doesn't need sudo
-	if runtime.GOOS == "darwin" {
-		return false
-	}
-
-	for _, t := range tasks {
-		if t.PromptForSudo {
-			return true
-		}
-	}
-	return false
 }
 
 // hasSudoCredentials checks if sudo credentials are already cached.

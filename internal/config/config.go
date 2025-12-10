@@ -26,10 +26,9 @@ type VariableDef struct {
 
 // Task represents a single action to execute.
 type Task struct {
-	Args          any    `yaml:"args"`
-	When          *When  `yaml:"when,omitempty"`
-	Action        string `yaml:"action"`
-	PromptForSudo bool   `yaml:"prompt_for_sudo,omitempty"`
+	Args   any    `yaml:"args"`
+	When   *When  `yaml:"when,omitempty"`
+	Action string `yaml:"action"`
 }
 
 // When defines conditions for task execution.

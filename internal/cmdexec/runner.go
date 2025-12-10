@@ -3,8 +3,10 @@
 package cmdexec
 
 import (
+	"booster/internal/logstream"
 	"bytes"
 	"context"
+	"io"
 	"os/exec"
 )
 
@@ -23,11 +25,20 @@ type Runner interface {
 type RealRunner struct{}
 
 // Run executes the command and returns combined stdout/stderr.
+// If a streaming writer is present in the context (via logstream.WithWriter),
+// output is also written to it in real-time.
 func (r *RealRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
+
+	// Check for streaming writer in context
+	var w io.Writer = &out
+	if stream := logstream.Writer(ctx); stream != nil {
+		w = io.MultiWriter(&out, stream)
+	}
+
+	cmd.Stdout = w
+	cmd.Stderr = w
 	err := cmd.Run()
 	return out.Bytes(), err
 }

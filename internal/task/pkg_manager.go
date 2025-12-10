@@ -11,13 +11,21 @@ import (
 
 // PkgManagerInstall installs a package manager (e.g., paru for Arch Linux).
 type PkgManagerInstall struct {
-	Runner  cmdexec.Runner
-	Manager string
+	Runner     cmdexec.Runner
+	Manager    string
+	PathFinder BrewPathFinder
 }
 
 // Name returns a human-readable description for display.
 func (t *PkgManagerInstall) Name() string {
 	return "install package manager: " + t.Manager
+}
+
+// NeedsSudo returns true - installing package managers requires elevated privileges.
+// On Linux: makepkg -si needs sudo for the install phase.
+// On macOS: Homebrew install script needs sudo to create /opt/homebrew or /usr/local.
+func (t *PkgManagerInstall) NeedsSudo() bool {
+	return true
 }
 
 // Run executes the installation. It is idempotent - skips if already installed.
@@ -52,14 +60,21 @@ func (t *PkgManagerInstall) Run(ctx context.Context) Result {
 	}
 }
 
-// checkBinaryExists returns true if the binary is found in PATH.
+// checkBinaryExists returns true if the binary is found.
+// For Homebrew, checks well-known paths directly to avoid stale PATH issues.
 func (t *PkgManagerInstall) checkBinaryExists(runner cmdexec.Runner) bool {
-	binary := t.Manager
-	// Homebrew's binary is "brew", not "homebrew"
+	// Homebrew: check known paths directly (PATH may be stale if installed this session)
 	if t.Manager == "homebrew" {
-		binary = "brew"
+		finder := t.PathFinder
+		if finder == nil {
+			finder = defaultBrewPathFinder
+		}
+		_, found := finder()
+		return found
 	}
-	_, err := runner.LookPath(binary)
+
+	// Other package managers: use PATH lookup
+	_, err := runner.LookPath(t.Manager)
 	return err == nil
 }
 

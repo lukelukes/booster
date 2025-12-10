@@ -52,6 +52,11 @@ func (t *MiseUse) Name() string {
 	return fmt.Sprintf("mise use: %d tools", len(t.Tools))
 }
 
+// NeedsSudo returns false - mise operates in user space.
+func (t *MiseUse) NeedsSudo() bool {
+	return false
+}
+
 // Run executes the mise configuration. It is idempotent.
 func (t *MiseUse) Run(ctx context.Context) Result {
 	runner := t.Runner

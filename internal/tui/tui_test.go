@@ -2,12 +2,15 @@ package tui
 
 import (
 	"booster/internal/executor"
+	"booster/internal/logstream"
 	"booster/internal/task"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,6 +30,10 @@ func (m *mockTask) Run(ctx context.Context) task.Result {
 	return m.result
 }
 
+func (m *mockTask) NeedsSudo() bool {
+	return false
+}
+
 // newMockTask creates a mock task with the given name and result.
 func newMockTask(name string, status task.Status, output string, err error) *mockTask {
 	return &mockTask{
@@ -35,6 +42,17 @@ func newMockTask(name string, status task.Status, output string, err error) *moc
 			Status: status,
 			Output: output,
 			Error:  err,
+		},
+	}
+}
+
+// newMockTaskWithMessage creates a mock task with a custom message.
+func newMockTaskWithMessage(name string, status task.Status, message string) *mockTask {
+	return &mockTask{
+		name: name,
+		result: task.Result{
+			Status:  status,
+			Message: message,
 		},
 	}
 }
@@ -211,6 +229,10 @@ func TestUpdate_TaskDoneMsg(t *testing.T) {
 	_, ok := model.exec.RunNext(context.Background())
 	require.True(t, ok, "First task should run")
 
+	// Set logsDone to true to simulate logs being fully received
+	// (coordination fix: taskDoneMsg waits for logDoneMsg)
+	model.logsDone = true
+
 	// Send taskDoneMsg - should trigger next task
 	msg := taskDoneMsg{result: task.Result{Status: task.StatusDone}}
 	newModel, cmd := model.Update(msg)
@@ -218,10 +240,9 @@ func TestUpdate_TaskDoneMsg(t *testing.T) {
 	assert.NotNil(t, cmd, "Should return command to run next task")
 	assert.IsType(t, Model{}, newModel, "Update should return Model type")
 
-	// Execute the command and verify it returns a taskDoneMsg
-	resultMsg := cmd()
-	_, isTaskDone := resultMsg.(taskDoneMsg)
-	assert.True(t, isTaskDone, "Command should return taskDoneMsg")
+	// startTask returns a batch command, verify it's not nil
+	// (The batch contains runTask and listenForLogs commands)
+	assert.NotNil(t, cmd, "Batch command should not be nil")
 }
 
 // TestUpdate_TaskDoneMsgWhenAllComplete verifies taskDoneMsg is ignored when all tasks are done.
@@ -235,6 +256,47 @@ func TestUpdate_TaskDoneMsgWhenAllComplete(t *testing.T) {
 
 	assert.Nil(t, cmd, "Should not return command when all tasks are complete")
 	assert.IsType(t, Model{}, newModel, "Update should return Model type")
+}
+
+func TestUpdate_TaskFailure_StopsExecution(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+		newMockTask("task2", task.StatusFailed, "", errors.New("fail")),
+		newMockTask("task3", task.StatusDone, "", nil), // Should NOT run
+	}
+	model := New(tasks)
+
+	// Manually run task1 through executor to set up state
+	result1, ok := model.exec.RunNext(context.Background())
+	require.True(t, ok, "Task1 should run")
+	require.Equal(t, task.StatusDone, result1.Status)
+
+	// Manually run task2 (which fails) through executor
+	result2, ok := model.exec.RunNext(context.Background())
+	require.True(t, ok, "Task2 should run")
+	require.Equal(t, task.StatusFailed, result2.Status)
+
+	// Set logsDone to true to simulate logs being fully received
+	model.logsDone = true
+
+	// Send taskDoneMsg for failed task2 - should stop execution
+	msg := taskDoneMsg{result: result2}
+	newModel, cmd := model.Update(msg)
+	model = newModel.(Model)
+
+	// Critical assertions:
+	assert.Nil(t, cmd, "Should NOT return command after failure")
+	assert.True(t, model.exec.Stopped(), "Executor should be stopped")
+	assert.False(t, model.exec.Done(), "Should NOT be done (task3 didn't run)")
+
+	// Verify task3 is still pending
+	assert.Equal(t, task.StatusPending, model.exec.ResultAt(2).Status,
+		"Task3 should remain pending after abort")
+
+	// Verify view shows pending task (not run - shown as pending in task list)
+	view := model.View()
+	assert.Contains(t, view, "task3", "Should show pending task in list")
+	assert.Contains(t, view, "BOOSTER FAILED", "Should show failure summary")
 }
 
 // TestUpdate_UnknownMessageIgnored verifies unknown messages don't cause issues.
@@ -303,7 +365,7 @@ func TestView_TaskStatus(t *testing.T) {
 			executeCount:  0, // First task should show as running
 			checkTaskName: "running task",
 			wantContains: []string{
-				"running task...",
+				"running task",
 				"→",
 			},
 		},
@@ -322,10 +384,10 @@ func TestView_TaskStatus(t *testing.T) {
 			},
 		},
 		{
-			name: "skipped task",
+			name: "skipped task (idempotent - exists)",
 			setupModel: func() Model {
 				tasks := []task.Task{
-					newMockTask("skipped task", task.StatusSkipped, "", nil),
+					newMockTaskWithMessage("skipped task", task.StatusSkipped, "already exists"),
 				}
 				return New(tasks)
 			},
@@ -333,7 +395,22 @@ func TestView_TaskStatus(t *testing.T) {
 			checkTaskName: "skipped task",
 			wantHelper: func(t *testing.T, view string) {
 				AssertTaskStatus(t, view, "skipped task", task.StatusSkipped)
-				AssertSkippedReason(t, view, "(exists)")
+				AssertSkippedReason(t, view, "exists")
+			},
+		},
+		{
+			name: "skipped task (condition not met)",
+			setupModel: func() Model {
+				tasks := []task.Task{
+					newMockTaskWithMessage("conditional task", task.StatusSkipped, "condition not met: os=darwin, want arch"),
+				}
+				return New(tasks)
+			},
+			executeCount:  1,
+			checkTaskName: "conditional task",
+			wantHelper: func(t *testing.T, view string) {
+				AssertTaskStatus(t, view, "conditional task", task.StatusSkipped)
+				AssertSkippedReason(t, view, "skipped")
 			},
 		},
 		{
@@ -364,7 +441,7 @@ func TestView_TaskStatus(t *testing.T) {
 			checkTaskName: "failed task",
 			wantContains: []string{
 				"failed task",
-				"unknown error",
+				"FAILED", // Shows in failure box even with nil error
 			},
 		},
 	}
@@ -405,11 +482,15 @@ type viewTestCase struct {
 
 // runViewTests is a test helper that executes view rendering test cases.
 // It creates a model, executes all tasks, sets showOutput, and asserts the view contains/doesn't contain expected strings.
+// Uses narrow terminal width (50) to test single-column mode.
 func runViewTests(t *testing.T, tests []viewTestCase) {
 	t.Helper()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			model := New(tt.tasks)
+			// Set terminal dimensions for viewport (narrow for single-column mode)
+			model.width = 50
+			model.height = 40
 
 			// Execute all tasks
 			for range tt.tasks {
@@ -417,6 +498,10 @@ func runViewTests(t *testing.T, tests []viewTestCase) {
 			}
 
 			model.showOutput = tt.showOutput
+			// Initialize viewport when showing output (simulates pressing 'o')
+			if tt.showOutput {
+				model.outputViewport = model.createOutputViewport()
+			}
 
 			view := model.View()
 
@@ -441,9 +526,9 @@ func TestView_Summary(t *testing.T) {
 				newMockTask("task2", task.StatusSkipped, "", nil),
 			},
 			wantContains: []string{
-				"Done!",
-				"1 completed",
-				"1 skipped",
+				"BOOSTER COMPLETE",
+				"completed",
+				"skipped",
 			},
 		},
 		{
@@ -453,9 +538,9 @@ func TestView_Summary(t *testing.T) {
 				newMockTask("task2", task.StatusFailed, "", errors.New("error")),
 			},
 			wantContains: []string{
-				"Finished with errors",
-				"1 done",
-				"1 failed",
+				"BOOSTER FAILED",
+				"completed",
+				"failed",
 			},
 		},
 	}
@@ -472,10 +557,10 @@ func TestView_HelpText(t *testing.T) {
 				newMockTask("task1", task.StatusDone, "", nil),
 			},
 			wantContains: []string{
-				"Press Enter to exit",
+				"Enter exit",
 			},
 			wantNotContains: []string{
-				"Press 'o'",
+				"'o'",
 			},
 		},
 		{
@@ -485,7 +570,7 @@ func TestView_HelpText(t *testing.T) {
 			},
 			showOutput: false,
 			wantContains: []string{
-				"Press 'o' to view output",
+				"'o' view output",
 			},
 		},
 		{
@@ -495,7 +580,8 @@ func TestView_HelpText(t *testing.T) {
 			},
 			showOutput: true,
 			wantContains: []string{
-				"Press 'o' to hide output",
+				"'o' hide",
+				"scroll",
 			},
 		},
 	}
@@ -607,28 +693,35 @@ func TestHasTaskOutput(t *testing.T) {
 	})
 }
 
-// TestRunNext verifies runNext creates a command that executes the next task.
-func TestRunNext(t *testing.T) {
+// TestStartTask verifies startTask sets up log streaming and runs the task.
+func TestStartTask(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "output", nil),
 	}
 	model := New(tasks)
 
-	cmd := model.runNext()
-	require.NotNil(t, cmd, "runNext should return a command")
+	logWriter, logCh, cmd := model.startTask()
+	require.NotNil(t, logWriter, "startTask should return a logWriter")
+	require.NotNil(t, logCh, "startTask should return a logCh")
+	require.NotNil(t, cmd, "startTask should return a command")
 
-	// Execute the command
-	msg := cmd()
+	// Run the task directly using the standalone runTask function
+	taskCmd := runTask(model.exec, logWriter)
+	msg := taskCmd()
 
-	// Verify it returns a taskDoneMsg
+	// Verify task completed
 	taskMsg, ok := msg.(taskDoneMsg)
-	require.True(t, ok, "Command should return taskDoneMsg")
-
-	// Verify the result has the expected status
+	require.True(t, ok, "Should return taskDoneMsg")
 	assert.Equal(t, task.StatusDone, taskMsg.result.Status, "Result should have done status")
+
+	// Log channel should be closed after task completes
+	_, ok = <-logCh
+	assert.False(t, ok, "Log channel should be closed after task")
 }
 
 // TestIntegration_FullTaskFlow verifies the complete task execution flow.
+// This tests the state transitions by manually running tasks through the executor
+// and sending the appropriate messages to the TUI.
 func TestIntegration_FullTaskFlow(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "output1", nil),
@@ -637,49 +730,50 @@ func TestIntegration_FullTaskFlow(t *testing.T) {
 	}
 	model := New(tasks)
 
-	// Initialize - should start first task
+	// Initialize - should return a command (batch)
 	cmd := model.Init()
 	require.NotNil(t, cmd, "Init should return command")
 
-	// Execute first task
-	msg := cmd()
-	taskMsg, ok := msg.(taskDoneMsg)
-	require.True(t, ok, "Should return taskDoneMsg")
-	assert.Equal(t, task.StatusDone, taskMsg.result.Status)
+	// Simulate running all tasks through the executor and updating the model
+	// Task 1: Done
+	result1, ok := model.exec.RunNext(context.Background())
+	require.True(t, ok, "Task1 should run")
+	assert.Equal(t, task.StatusDone, result1.Status)
 
-	// Process first completion - should trigger second task
-	newModel, cmd := model.Update(taskMsg)
+	model.logsDone = true // simulate logs complete
+	newModel, cmd := model.Update(taskDoneMsg{result: result1})
 	model, ok = newModel.(Model)
 	require.True(t, ok, "newModel should be Model type")
-	require.NotNil(t, cmd, "Should return command for second task")
+	require.NotNil(t, cmd, "Should return command for task2")
 
-	// Execute second task
-	msg = cmd()
-	taskMsg, ok = msg.(taskDoneMsg)
-	require.True(t, ok, "Should return taskDoneMsg")
-	assert.Equal(t, task.StatusSkipped, taskMsg.result.Status)
+	// Task 2: Skipped
+	result2, ok := model.exec.RunNext(context.Background())
+	require.True(t, ok, "Task2 should run")
+	assert.Equal(t, task.StatusSkipped, result2.Status)
 
-	// Process second completion - should trigger third task
-	newModel, cmd = model.Update(taskMsg)
+	model.logsDone = true // simulate logs complete
+	newModel, cmd = model.Update(taskDoneMsg{result: result2})
 	model, ok = newModel.(Model)
 	require.True(t, ok, "newModel should be Model type")
-	require.NotNil(t, cmd, "Should return command for third task")
+	require.NotNil(t, cmd, "Should return command for task3")
 
-	// Execute third task
-	msg = cmd()
-	taskMsg, ok = msg.(taskDoneMsg)
-	require.True(t, ok, "Should return taskDoneMsg")
-	assert.Equal(t, task.StatusFailed, taskMsg.result.Status)
+	// Task 3: Failed
+	result3, ok := model.exec.RunNext(context.Background())
+	require.True(t, ok, "Task3 should run")
+	assert.Equal(t, task.StatusFailed, result3.Status)
 
-	// Process third completion - should complete
-	newModel, cmd = model.Update(taskMsg)
+	model.logsDone = true // simulate logs complete
+	newModel, cmd = model.Update(taskDoneMsg{result: result3})
 	model, ok = newModel.(Model)
 	require.True(t, ok, "newModel should be Model type")
-	assert.Nil(t, cmd, "Should return nil when all tasks complete")
+	assert.Nil(t, cmd, "Should return nil after failure (aborted)")
+
+	// Verify final state
+	assert.True(t, model.exec.Stopped(), "Executor should be stopped")
 
 	// Verify final view
 	view := model.View()
-	assert.Contains(t, view, "Finished with errors", "Should show error summary")
+	assert.Contains(t, view, "BOOSTER FAILED", "Should show error summary")
 	assert.Contains(t, view, "✓ task1", "Should show completed task")
 	assert.Contains(t, view, "○ task2", "Should show skipped task")
 	assert.Contains(t, view, "✗ task3", "Should show failed task")
@@ -738,4 +832,888 @@ func TestView_MultipleTasksWithDifferentStatuses(t *testing.T) {
 	assert.True(t, foundFailed, "Should find failed task with X")
 	assert.True(t, foundRunning, "Should find running task with arrow")
 	assert.True(t, foundPending, "Should find pending task with spaces")
+}
+
+// streamingMockTask writes to the log stream when Run is called.
+type streamingMockTask struct {
+	name   string
+	lines  []string // lines to write to stream
+	result task.Result
+}
+
+func (m *streamingMockTask) Name() string    { return m.name }
+func (m *streamingMockTask) NeedsSudo() bool { return false }
+func (m *streamingMockTask) Run(ctx context.Context) task.Result {
+	// Get the stream writer from context and write lines
+	if w := logstream.Writer(ctx); w != nil {
+		for _, line := range m.lines {
+			w.Write([]byte(line + "\n"))
+		}
+	}
+	return m.result
+}
+
+// TestLogStreaming_Integration verifies that log streaming works end-to-end.
+// This test ensures that:
+// 1. Tasks can write to the log stream via context
+// 2. Log lines are properly channeled to the model
+// 3. The model receives and can process streaming log lines
+func TestLogStreaming_Integration(t *testing.T) {
+	// Create task that emits specific lines
+	streamTask := &streamingMockTask{
+		name:   "streaming task",
+		lines:  []string{"line1", "line2", "line3"},
+		result: task.Result{Status: task.StatusDone},
+	}
+
+	model := New([]task.Task{streamTask})
+
+	// Call startTask to set up streaming
+	logWriter, logCh, cmd := model.startTask()
+	require.NotNil(t, logWriter, "logWriter should be returned")
+	require.NotNil(t, logCh, "logCh should be returned")
+	require.NotNil(t, cmd, "startTask should return a command")
+
+	// Run the task command directly using the standalone runTask function
+	taskCmd := runTask(model.exec, logWriter)
+	taskMsg := taskCmd()
+
+	// Collect all log lines from channel before it closes
+	var receivedLines []string
+	for line := range logCh {
+		receivedLines = append(receivedLines, line)
+	}
+
+	// Verify we got all lines
+	assert.Equal(t, []string{"line1", "line2", "line3"}, receivedLines,
+		"Should receive all streamed log lines in order")
+
+	// Verify task completed successfully
+	doneMsg, ok := taskMsg.(taskDoneMsg)
+	require.True(t, ok, "Should return taskDoneMsg")
+	assert.Equal(t, task.StatusDone, doneMsg.result.Status, "Task should complete successfully")
+}
+
+// TestLogStreaming_IntegrationWithModelUpdate verifies log streaming integrates with model updates.
+// This test ensures that logLineMsg updates the model state correctly.
+func TestLogStreaming_IntegrationWithModelUpdate(t *testing.T) {
+	streamTask := &streamingMockTask{
+		name:   "streaming task",
+		lines:  []string{"log line 1", "log line 2"},
+		result: task.Result{Status: task.StatusDone},
+	}
+
+	model := New([]task.Task{streamTask})
+
+	// Run the task through executor first to set up proper state
+	result, ok := model.exec.RunNext(context.Background())
+	require.True(t, ok, "Task should run")
+	require.Equal(t, task.StatusDone, result.Status)
+
+	// Initialize streaming via startTaskMsg
+	logWriter, logCh, cmd := model.startTask()
+	model.logWriter = logWriter
+	model.logCh = logCh
+	require.NotNil(t, cmd, "startTask should return a command")
+
+	// Simulate receiving log lines via Update
+	// First log line
+	newModel, cmd := model.Update(logLineMsg{line: "log line 1"})
+	model, ok2 := newModel.(Model)
+	require.True(t, ok2, "newModel should be Model type")
+	assert.Len(t, model.currentLogs, 1, "Should have 1 log line")
+	assert.Equal(t, "log line 1", model.currentLogs[0], "Should contain first log line")
+	assert.NotNil(t, cmd, "Should return listenForLogs command")
+
+	// Second log line
+	newModel, cmd = model.Update(logLineMsg{line: "log line 2"})
+	model, ok2 = newModel.(Model)
+	require.True(t, ok2, "newModel should be Model type")
+	assert.Len(t, model.currentLogs, 2, "Should have 2 log lines")
+	assert.Equal(t, "log line 1", model.currentLogs[0], "Should contain first log line")
+	assert.Equal(t, "log line 2", model.currentLogs[1], "Should contain second log line")
+	assert.NotNil(t, cmd, "Should return listenForLogs command")
+
+	// Log done
+	newModel, cmd = model.Update(logDoneMsg{})
+	model, ok2 = newModel.(Model)
+	require.True(t, ok2, "newModel should be Model type")
+	assert.Nil(t, cmd, "Should return nil command for logDoneMsg")
+
+	// Task done - should move to history and clear current logs
+	newModel, _ = model.Update(taskDoneMsg{result: result})
+	model, ok2 = newModel.(Model)
+	require.True(t, ok2, "newModel should be Model type")
+	assert.Empty(t, model.currentLogs, "Current log lines should be cleared after task completion")
+	assert.Len(t, model.logHistory[0], 2, "Log lines should be moved to history")
+}
+
+// TestLogStreaming_MaxLinesLimit verifies that log lines are capped at maxLogLines in the view.
+func TestLogStreaming_MaxLinesLimit(t *testing.T) {
+	model := New([]task.Task{newMockTask("task", task.StatusDone, "", nil)})
+
+	// Add more than maxLogLines
+	for i := range maxLogLines + 5 {
+		msg := logLineMsg{line: fmt.Sprintf("line %d", i)}
+		newModel, _ := model.Update(msg)
+		model = newModel.(Model)
+	}
+
+	// All lines should be in currentLogs (not capped)
+	assert.Len(t, model.currentLogs, maxLogLines+5, "currentLogs should contain all lines")
+
+	// Verify the view only shows the last maxLogLines
+	view := model.View()
+	// Should show "line 5" through "line 12" (last 8 lines)
+	assert.Contains(t, view, "line 12", "View should show most recent line")
+	assert.Contains(t, view, "line 5", "View should show oldest of recent lines")
+	assert.NotContains(t, view, "line 0", "View should not show old lines")
+}
+
+// TestLogHistory_Persistence verifies log history persists across task completion.
+func TestLogHistory_Persistence(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+		newMockTask("task2", task.StatusDone, "", nil),
+		newMockTask("task3", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+
+	// Run task 1 and add logs
+	_, ok := model.exec.RunNext(context.Background())
+	require.True(t, ok, "Task1 should run")
+
+	// Simulate log lines for task 1
+	newModel, _ := model.Update(logLineMsg{line: "task1 log line 1"})
+	model = newModel.(Model)
+	newModel, _ = model.Update(logLineMsg{line: "task1 log line 2"})
+	model = newModel.(Model)
+
+	// Verify currentLogs has the lines
+	assert.Len(t, model.currentLogs, 2, "currentLogs should have 2 lines")
+	assert.Equal(t, "task1 log line 1", model.currentLogs[0])
+	assert.Equal(t, "task1 log line 2", model.currentLogs[1])
+
+	// Complete task 1 (set logsDone to simulate log stream completion)
+	model.logsDone = true
+	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
+	model = newModel.(Model)
+
+	// Verify logs moved to history and currentLogs cleared
+	assert.Empty(t, model.currentLogs, "currentLogs should be cleared after task completion")
+	assert.Len(t, model.logHistory[0], 2, "logHistory[0] should have 2 lines")
+	assert.Equal(t, "task1 log line 1", model.logHistory[0][0])
+	assert.Equal(t, "task1 log line 2", model.logHistory[0][1])
+
+	// Run task 2 and add logs
+	_, ok = model.exec.RunNext(context.Background())
+	require.True(t, ok, "Task2 should run")
+
+	newModel, _ = model.Update(logLineMsg{line: "task2 log line 1"})
+	model = newModel.(Model)
+	newModel, _ = model.Update(logLineMsg{line: "task2 log line 2"})
+	model = newModel.(Model)
+	newModel, _ = model.Update(logLineMsg{line: "task2 log line 3"})
+	model = newModel.(Model)
+
+	// Complete task 2
+	model.logsDone = true
+	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
+	model = newModel.(Model)
+
+	// Verify task 1 logs still in history and task 2 logs added
+	assert.Len(t, model.logHistory[0], 2, "logHistory[0] should still have 2 lines")
+	assert.Len(t, model.logHistory[1], 3, "logHistory[1] should have 3 lines")
+	assert.Equal(t, "task2 log line 1", model.logHistory[1][0])
+	assert.Equal(t, "task2 log line 2", model.logHistory[1][1])
+	assert.Equal(t, "task2 log line 3", model.logHistory[1][2])
+
+	// Run task 3 with no logs
+	_, ok = model.exec.RunNext(context.Background())
+	require.True(t, ok, "Task3 should run")
+
+	// Complete task 3 (no logs)
+	model.logsDone = true
+	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
+	model = newModel.(Model)
+
+	// Verify task 3 has no entry in logHistory (empty logs not stored)
+	_, exists := model.logHistory[2]
+	assert.False(t, exists, "logHistory[2] should not exist for task with no logs")
+
+	// Verify previous logs still intact
+	assert.Len(t, model.logHistory[0], 2, "logHistory[0] should still have 2 lines")
+	assert.Len(t, model.logHistory[1], 3, "logHistory[1] should still have 3 lines")
+}
+
+// TestSelectedTask_AutoAdvancement verifies selectedTask auto-advances on task completion.
+func TestSelectedTask_AutoAdvancement(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+		newMockTask("task2", task.StatusDone, "", nil),
+		newMockTask("task3", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+
+	// Initial selectedTask should be 0
+	assert.Equal(t, 0, model.selectedTask, "Initial selectedTask should be 0")
+
+	// Run and complete task 1
+	_, _ = model.exec.RunNext(context.Background())
+	model.logsDone = true
+	newModel, _ := model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
+	model = newModel.(Model)
+
+	// selectedTask should advance to 1
+	assert.Equal(t, 1, model.selectedTask, "selectedTask should advance to 1")
+
+	// Run and complete task 2
+	_, _ = model.exec.RunNext(context.Background())
+	model.logsDone = true
+	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
+	model = newModel.(Model)
+
+	// selectedTask should advance to 2
+	assert.Equal(t, 2, model.selectedTask, "selectedTask should advance to 2")
+
+	// Run and complete task 3 (last task)
+	_, _ = model.exec.RunNext(context.Background())
+	model.logsDone = true
+	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
+	model = newModel.(Model)
+
+	// selectedTask should NOT advance beyond last task
+	assert.Equal(t, 2, model.selectedTask, "selectedTask should not advance beyond last task")
+}
+
+// TestLogHistory_FailedTask verifies log history persists even when task fails.
+func TestLogHistory_FailedTask(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+		newMockTask("task2", task.StatusFailed, "", errors.New("failure")),
+	}
+	model := New(tasks)
+
+	// Run and complete task 1 with logs
+	_, _ = model.exec.RunNext(context.Background())
+	newModel, _ := model.Update(logLineMsg{line: "task1 log"})
+	model = newModel.(Model)
+	model.logsDone = true
+	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
+	model = newModel.(Model)
+
+	// Run task 2 with logs, then fail
+	_, _ = model.exec.RunNext(context.Background())
+	newModel, _ = model.Update(logLineMsg{line: "task2 log 1"})
+	model = newModel.(Model)
+	newModel, _ = model.Update(logLineMsg{line: "task2 log 2"})
+	model = newModel.(Model)
+	model.logsDone = true
+	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusFailed}})
+	model = newModel.(Model)
+
+	// Verify both tasks have logs in history
+	assert.Len(t, model.logHistory[0], 1, "logHistory[0] should have 1 line")
+	assert.Equal(t, "task1 log", model.logHistory[0][0])
+
+	assert.Len(t, model.logHistory[1], 2, "logHistory[1] should have 2 lines")
+	assert.Equal(t, "task2 log 1", model.logHistory[1][0])
+	assert.Equal(t, "task2 log 2", model.logHistory[1][1])
+
+	// Verify execution stopped
+	assert.True(t, model.exec.Stopped(), "Executor should be stopped after failure")
+}
+
+// TestLogTaskCoordination_TaskDoneBeforeLogDone verifies that when taskDoneMsg
+// arrives before logDoneMsg, logs are still correctly attributed to the task.
+// This tests the race condition fix.
+func TestLogTaskCoordination_TaskDoneBeforeLogDone(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+		newMockTask("task2", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+
+	// Run task 1
+	_, _ = model.exec.RunNext(context.Background())
+
+	// Simulate log lines arriving
+	newModel, _ := model.Update(logLineMsg{line: "log line 1"})
+	model = newModel.(Model)
+	newModel, _ = model.Update(logLineMsg{line: "log line 2"})
+	model = newModel.(Model)
+
+	// Simulate taskDoneMsg arriving BEFORE logDoneMsg (the race condition scenario)
+	// logsDone is false by default
+	assert.False(t, model.logsDone, "logsDone should be false initially")
+	newModel, cmd := model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
+	model = newModel.(Model)
+
+	// Task should NOT be completed yet - result should be pending
+	assert.NotNil(t, model.pendingResult, "pendingResult should be set when taskDone arrives before logDone")
+	assert.Nil(t, cmd, "Should not return command until logs are done")
+	assert.Len(t, model.currentLogs, 2, "currentLogs should still have lines")
+
+	// Now more logs arrive (simulating buffered channel draining)
+	newModel, _ = model.Update(logLineMsg{line: "log line 3"})
+	model = newModel.(Model)
+	assert.Len(t, model.currentLogs, 3, "currentLogs should have 3 lines now")
+
+	// Finally logDoneMsg arrives
+	newModel, cmd = model.Update(logDoneMsg{})
+	model = newModel.(Model)
+
+	// NOW the task should be completed
+	assert.Nil(t, model.pendingResult, "pendingResult should be cleared after processing")
+	assert.NotNil(t, cmd, "Should return command to start next task")
+	assert.Empty(t, model.currentLogs, "currentLogs should be cleared")
+	assert.Len(t, model.logHistory[0], 3, "All 3 log lines should be in history")
+	assert.Equal(t, "log line 1", model.logHistory[0][0])
+	assert.Equal(t, "log line 2", model.logHistory[0][1])
+	assert.Equal(t, "log line 3", model.logHistory[0][2])
+}
+
+// TestLogTaskCoordination_LogDoneBeforeTaskDone verifies normal case where
+// logDoneMsg arrives before taskDoneMsg works correctly.
+func TestLogTaskCoordination_LogDoneBeforeTaskDone(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+		newMockTask("task2", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+
+	// Run task 1
+	_, _ = model.exec.RunNext(context.Background())
+
+	// Simulate log lines arriving
+	newModel, _ := model.Update(logLineMsg{line: "log line 1"})
+	model = newModel.(Model)
+
+	// logDoneMsg arrives first (normal happy path)
+	newModel, cmd := model.Update(logDoneMsg{})
+	model = newModel.(Model)
+
+	assert.True(t, model.logsDone, "logsDone should be true after logDoneMsg")
+	assert.Nil(t, model.pendingResult, "No pending result when logs done first")
+	assert.Nil(t, cmd, "No command from logDoneMsg alone")
+
+	// Now taskDoneMsg arrives - should process immediately since logsDone=true
+	newModel, cmd = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
+	model = newModel.(Model)
+
+	assert.NotNil(t, cmd, "Should return command to start next task")
+	assert.Empty(t, model.currentLogs, "currentLogs should be cleared")
+	assert.Len(t, model.logHistory[0], 1, "Log should be in history")
+}
+
+// TestFocusMode_TabKeyTogglesFocus verifies Tab key switches focus between panels.
+func TestFocusMode_TabKeyTogglesFocus(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+		newMockTask("task2", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+	// Set up two-column mode
+	model.width = 100
+	model.height = 40
+
+	// Initial focus should be on task list
+	assert.Equal(t, FocusTaskList, model.focusedPanel, "Initial focus should be on TaskList")
+
+	// Press Tab - should switch to Logs
+	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("tab")})
+	model = newModel.(Model)
+	assert.Nil(t, cmd, "Tab should not return a command")
+	assert.Equal(t, FocusLogs, model.focusedPanel, "Focus should switch to Logs")
+
+	// Press Tab again - should switch back to TaskList
+	newModel, cmd = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("tab")})
+	model = newModel.(Model)
+	assert.Nil(t, cmd, "Tab should not return a command")
+	assert.Equal(t, FocusTaskList, model.focusedPanel, "Focus should switch back to TaskList")
+}
+
+// TestFocusMode_JKNavigationTaskList verifies j/k navigation in task list when focused.
+func TestFocusMode_JKNavigationTaskList(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+		newMockTask("task2", task.StatusDone, "", nil),
+		newMockTask("task3", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+	// Set up two-column mode
+	model.width = 100
+	model.height = 40
+	model.focusedPanel = FocusTaskList
+
+	// Initial selectedTask should be 0
+	assert.Equal(t, 0, model.selectedTask, "Initial selectedTask should be 0")
+
+	// Press j - should move to task 1
+	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	model = newModel.(Model)
+	assert.Equal(t, 1, model.selectedTask, "selectedTask should be 1")
+
+	// Press j again - should move to task 2
+	newModel, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	model = newModel.(Model)
+	assert.Equal(t, 2, model.selectedTask, "selectedTask should be 2")
+
+	// Press j again - should stay at task 2 (bounds check)
+	newModel, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	model = newModel.(Model)
+	assert.Equal(t, 2, model.selectedTask, "selectedTask should stay at 2 (max)")
+
+	// Press k - should move back to task 1
+	newModel, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	model = newModel.(Model)
+	assert.Equal(t, 1, model.selectedTask, "selectedTask should be 1")
+
+	// Press k again - should move to task 0
+	newModel, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	model = newModel.(Model)
+	assert.Equal(t, 0, model.selectedTask, "selectedTask should be 0")
+
+	// Press k again - should stay at task 0 (bounds check)
+	newModel, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	model = newModel.(Model)
+	assert.Equal(t, 0, model.selectedTask, "selectedTask should stay at 0 (min)")
+}
+
+// TestFocusMode_ArrowKeyNavigationTaskList verifies arrow key navigation in task list.
+func TestFocusMode_ArrowKeyNavigationTaskList(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+		newMockTask("task2", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+	// Set up two-column mode
+	model.width = 100
+	model.height = 40
+	model.focusedPanel = FocusTaskList
+
+	// Press down arrow - should move to task 1
+	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = newModel.(Model)
+	assert.Equal(t, 1, model.selectedTask, "selectedTask should be 1")
+
+	// Press up arrow - should move back to task 0
+	newModel, _ = model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	model = newModel.(Model)
+	assert.Equal(t, 0, model.selectedTask, "selectedTask should be 0")
+}
+
+// TestFocusMode_JKScrollsLogsWhenFocused verifies j/k scrolls logs when logs panel is focused.
+func TestFocusMode_JKScrollsLogsWhenFocused(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+	// Set up two-column mode with viewport
+	model.width = 100
+	model.height = 40
+	model.focusedPanel = FocusLogs
+
+	// Initialize log viewport with content
+	layout := NewLayout(model.width, model.height)
+	model.logViewport = viewport.New(layout.RightWidth-2, layout.Height-5)
+	// Add enough content to make scrolling possible
+	lines := make([]string, 50)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("log line %d", i)
+	}
+	model.logViewport.SetContent(strings.Join(lines, "\n"))
+
+	// Initial Y offset should be 0
+	initialY := model.logViewport.YOffset
+
+	// Press j - should scroll down
+	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	model = newModel.(Model)
+	assert.Greater(t, model.logViewport.YOffset, initialY, "YOffset should increase after pressing j")
+
+	// Press k - should scroll back up
+	newModel, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	model = newModel.(Model)
+	assert.Equal(t, initialY, model.logViewport.YOffset, "YOffset should return to initial after pressing k")
+}
+
+// TestFocusMode_GKeyJumpsToBottom verifies G key jumps to bottom when logs focused.
+func TestFocusMode_GKeyJumpsToBottom(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+	// Set up two-column mode with viewport
+	model.width = 100
+	model.height = 40
+	model.focusedPanel = FocusLogs
+
+	// Initialize log viewport with content
+	layout := NewLayout(model.width, model.height)
+	model.logViewport = viewport.New(layout.RightWidth-2, layout.Height-5)
+	// Add enough content to make scrolling possible
+	lines := make([]string, 50)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("log line %d", i)
+	}
+	model.logViewport.SetContent(strings.Join(lines, "\n"))
+
+	// Press G - should jump to bottom
+	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")})
+	model = newModel.(Model)
+	assert.True(t, model.logViewport.AtBottom(), "Viewport should be at bottom after pressing G")
+}
+
+// TestFocusMode_GKeyIgnoredWhenTaskListFocused verifies G key is ignored when task list focused.
+func TestFocusMode_GKeyIgnoredWhenTaskListFocused(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+	// Set up two-column mode with viewport
+	model.width = 100
+	model.height = 40
+	model.focusedPanel = FocusTaskList
+
+	// Initialize log viewport with content
+	layout := NewLayout(model.width, model.height)
+	model.logViewport = viewport.New(layout.RightWidth-2, layout.Height-5)
+	lines := make([]string, 50)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("log line %d", i)
+	}
+	model.logViewport.SetContent(strings.Join(lines, "\n"))
+
+	initialY := model.logViewport.YOffset
+
+	// Press G - should be ignored (focus is on task list)
+	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")})
+	model = newModel.(Model)
+	assert.Equal(t, initialY, model.logViewport.YOffset, "YOffset should not change when G pressed with task list focused")
+}
+
+// TestFocusMode_NavigationBounds verifies navigation respects bounds.
+func TestFocusMode_NavigationBounds(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+		newMockTask("task2", task.StatusDone, "", nil),
+		newMockTask("task3", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+	// Set up two-column mode
+	model.width = 100
+	model.height = 40
+	model.focusedPanel = FocusTaskList
+
+	// Test lower bound
+	model.selectedTask = 0
+	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	model = newModel.(Model)
+	assert.Equal(t, 0, model.selectedTask, "selectedTask should not go below 0")
+
+	// Test upper bound
+	model.selectedTask = 2 // Last task (index 2 of 3 tasks)
+	newModel, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	model = newModel.(Model)
+	assert.Equal(t, 2, model.selectedTask, "selectedTask should not exceed task count - 1")
+}
+
+// TestShowLogs_DefaultTrue verifies showLogs defaults to true.
+func TestShowLogs_DefaultTrue(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+
+	assert.True(t, model.showLogs, "showLogs should default to true")
+}
+
+// TestShowLogs_ToggleWithOKey verifies 'o' key toggles showLogs.
+func TestShowLogs_ToggleWithOKey(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+	// Set up two-column mode
+	model.width = 100
+	model.height = 40
+
+	// Initial state should be true
+	assert.True(t, model.showLogs, "showLogs should default to true")
+
+	// Press 'o' - should toggle to false
+	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")})
+	model = newModel.(Model)
+	assert.Nil(t, cmd, "Should not return a command")
+	assert.False(t, model.showLogs, "showLogs should be toggled to false")
+
+	// Press 'o' again - should toggle back to true
+	newModel, cmd = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")})
+	model = newModel.(Model)
+	assert.Nil(t, cmd, "Should not return a command")
+	assert.True(t, model.showLogs, "showLogs should be toggled back to true")
+}
+
+// TestShowLogs_PanelShowsPlaceholderWhenEmpty verifies logs panel shows placeholder when no logs.
+func TestShowLogs_PanelShowsPlaceholderWhenEmpty(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+	// Set up two-column mode
+	model.width = 100
+	model.height = 40
+
+	// Initialize viewport
+	layout := NewLayout(model.width, model.height)
+	model.logViewport = viewport.New(layout.RightWidth-2, layout.Height-5)
+
+	// No logs yet
+	assert.Empty(t, model.currentLogs, "currentLogs should be empty")
+	assert.Empty(t, model.logHistory, "logHistory should be empty")
+
+	// Render view
+	view := model.View()
+
+	// Should contain richer empty state with task name and status message
+	assert.Contains(t, view, "task1", "View should contain task name")
+	assert.Contains(t, view, "Waiting for output...", "View should contain waiting message")
+}
+
+// TestShowLogs_DisplaysHistoryWhenStopped verifies logs panel shows history when stopped.
+func TestShowLogs_DisplaysHistoryWhenStopped(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+		newMockTask("task2", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+	// Set up two-column mode
+	model.width = 100
+	model.height = 40
+
+	// Initialize viewport
+	layout := NewLayout(model.width, model.height)
+	model.logViewport = viewport.New(layout.RightWidth-2, layout.Height-5)
+
+	// Simulate task 1 completion with logs
+	_, _ = model.exec.RunNext(context.Background())
+	model.logHistory[0] = []string{"task1 log line 1", "task1 log line 2"}
+
+	// Simulate task 2 completion with logs
+	_, _ = model.exec.RunNext(context.Background())
+	model.logHistory[1] = []string{"task2 log line 1", "task2 log line 2", "task2 log line 3"}
+
+	// Set selectedTask to 0
+	model.selectedTask = 0
+
+	// Get display logs - should return task1 logs
+	logs := model.getDisplayLogs()
+	assert.Len(t, logs, 2, "Should return task1 logs")
+	assert.Equal(t, "task1 log line 1", logs[0])
+	assert.Equal(t, "task1 log line 2", logs[1])
+
+	// Set selectedTask to 1
+	model.selectedTask = 1
+
+	// Get display logs - should return task2 logs
+	logs = model.getDisplayLogs()
+	assert.Len(t, logs, 3, "Should return task2 logs")
+	assert.Equal(t, "task2 log line 1", logs[0])
+	assert.Equal(t, "task2 log line 2", logs[1])
+	assert.Equal(t, "task2 log line 3", logs[2])
+}
+
+// TestShowLogs_AutoscrollStickToBottom verifies autoscroll behavior.
+func TestShowLogs_AutoscrollStickToBottom(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+	// Set up two-column mode
+	model.width = 100
+	model.height = 40
+
+	// Initialize viewport
+	layout := NewLayout(model.width, model.height)
+	model.logViewport = viewport.New(layout.RightWidth-2, layout.Height-5)
+
+	// Add many log lines to make scrolling possible
+	for i := range 50 {
+		msg := logLineMsg{line: fmt.Sprintf("log line %d", i)}
+		newModel, _ := model.Update(msg)
+		model = newModel.(Model)
+	}
+
+	// Viewport should be at bottom after autoscroll
+	assert.True(t, model.logViewport.AtBottom(), "Viewport should be at bottom after autoscroll")
+
+	// Scroll up
+	model.logViewport.ScrollUp(5)
+	assert.False(t, model.logViewport.AtBottom(), "Viewport should not be at bottom after scrolling up")
+
+	// Add another log line - should NOT autoscroll (user scrolled up)
+	beforeY := model.logViewport.YOffset
+	msg := logLineMsg{line: "new log line"}
+	newModel, _ := model.Update(msg)
+	model = newModel.(Model)
+
+	// YOffset should remain roughly the same (not scrolled to bottom)
+	assert.InDelta(t, beforeY, model.logViewport.YOffset, 1.0, "YOffset should not change significantly")
+	assert.False(t, model.logViewport.AtBottom(), "Viewport should not auto-scroll when user scrolled up")
+
+	// Scroll back to bottom
+	model.logViewport.GotoBottom()
+	assert.True(t, model.logViewport.AtBottom(), "Viewport should be at bottom after GotoBottom")
+
+	// Add another log line - should autoscroll (user is at bottom)
+	msg = logLineMsg{line: "another log line"}
+	newModel, _ = model.Update(msg)
+	model = newModel.(Model)
+
+	assert.True(t, model.logViewport.AtBottom(), "Viewport should autoscroll when at bottom")
+}
+
+// TestShowLogs_GetDisplayLogs verifies getDisplayLogs returns correct logs based on state.
+func TestShowLogs_GetDisplayLogs(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+		newMockTask("task2", task.StatusDone, "", nil),
+		newMockTask("task3", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+
+	// Simulate all tasks completed with logs
+	_, _ = model.exec.RunNext(context.Background())
+	model.logHistory[0] = []string{"task1 log"}
+
+	_, _ = model.exec.RunNext(context.Background())
+	model.logHistory[1] = []string{"task2 log"}
+
+	_, _ = model.exec.RunNext(context.Background())
+	// task3 has no logs
+
+	// When stopped, should return history for selected task
+	model.selectedTask = 0
+	logs := model.getDisplayLogs()
+	assert.Len(t, logs, 1, "Should return task1 logs")
+	assert.Equal(t, "task1 log", logs[0])
+
+	model.selectedTask = 1
+	logs = model.getDisplayLogs()
+	assert.Len(t, logs, 1, "Should return task2 logs")
+	assert.Equal(t, "task2 log", logs[0])
+
+	model.selectedTask = 2
+	logs = model.getDisplayLogs()
+	assert.Nil(t, logs, "Should return nil for task with no logs")
+}
+
+// TestAppContainer_RendersWithBorder verifies the app container renders with border.
+func TestAppContainer_RendersWithBorder(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+	// Set terminal dimensions
+	model.width = 80
+	model.height = 40
+
+	view := model.View()
+
+	// View should start with top-left corner character (╭ or ANSI sequence containing it)
+	assert.Contains(t, view, "╭", "View should contain top-left border corner")
+	// View should contain bottom-left corner character (╰)
+	assert.Contains(t, view, "╰", "View should contain bottom-left border corner")
+	// View should contain top-right corner character (╮)
+	assert.Contains(t, view, "╮", "View should contain top-right border corner")
+	// View should contain bottom-right corner character (╯)
+	assert.Contains(t, view, "╯", "View should contain bottom-right border corner")
+}
+
+// TestAppContainer_HandlesSmallTerminal verifies container handles small terminal sizes.
+func TestAppContainer_HandlesSmallTerminal(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+	// Set very small terminal dimensions
+	model.width = 20
+	model.height = 10
+
+	view := model.View()
+
+	// Should still render without panic
+	assert.NotEmpty(t, view, "View should not be empty even with small dimensions")
+	// Should still have border characters
+	assert.Contains(t, view, "╭", "View should contain border even with small dimensions")
+}
+
+// TestAppContainer_HandlesZeroDimensions verifies container handles zero dimensions gracefully.
+func TestAppContainer_HandlesZeroDimensions(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+	// Set zero terminal dimensions (before first WindowSizeMsg)
+	model.width = 0
+	model.height = 0
+
+	view := model.View()
+
+	// Should render without panic
+	assert.NotEmpty(t, view, "View should not be empty even with zero dimensions")
+}
+
+// TestAppContainer_TwoColumnMode verifies container works with two-column layout.
+func TestAppContainer_TwoColumnMode(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+		newMockTask("task2", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+	// Set wide terminal for two-column mode
+	model.width = 120
+	model.height = 40
+
+	view := model.View()
+
+	// Should have border
+	assert.Contains(t, view, "╭", "View should contain border in two-column mode")
+	assert.Contains(t, view, "╯", "View should contain border in two-column mode")
+	// Should still contain BOOSTER title
+	assert.Contains(t, view, "BOOSTER", "View should contain title in two-column mode")
+}
+
+// TestAppContainer_HelpBarInsideContainer verifies help bar renders inside container.
+func TestAppContainer_HelpBarInsideContainer(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+	// Set terminal dimensions
+	model.width = 100
+	model.height = 40
+
+	// Execute task to reach completion state
+	_, _ = model.exec.RunNext(context.Background())
+
+	view := model.View()
+
+	// View should have border
+	assert.Contains(t, view, "╭", "View should contain border")
+	assert.Contains(t, view, "╯", "View should contain border")
+
+	// Help bar should be present (two-column mode uses lowercase "enter exit")
+	assert.Contains(t, view, "enter exit", "View should contain help text")
+
+	// Split into lines and verify border structure
+	lines := strings.Split(view, "\n")
+	assert.Greater(t, len(lines), 2, "View should have multiple lines")
+
+	// First line should start with top border
+	assert.Contains(t, lines[0], "╭", "First line should contain top border")
+	// Last line should end with bottom border
+	lastLine := lines[len(lines)-1]
+	assert.Contains(t, lastLine, "╯", "Last line should contain bottom border")
 }

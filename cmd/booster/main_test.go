@@ -376,9 +376,10 @@ tasks:
 	require.NoError(t, err)
 }
 
-// TestRunCmd_PromptForSudoField verifies configs with prompt_for_sudo are parsed.
-// The actual sudo handling is not tested (it requires interactive input).
-func TestRunCmd_PromptForSudoField(t *testing.T) {
+// TestRunCmd_BackwardsCompatibility_IgnoresUnknownFields verifies that
+// unknown config fields (like the deprecated prompt_for_sudo) don't cause errors.
+// Tasks now self-declare sudo requirements via NeedsSudo() method.
+func TestRunCmd_BackwardsCompatibility_IgnoresUnknownFields(t *testing.T) {
 	content := `version: "1"
 tasks:
   - action: pkg-manager.install
@@ -390,6 +391,7 @@ tasks:
 
 	err := cmd.Run(cli)
 
+	// Should succeed - unknown fields are ignored by YAML unmarshaler
 	require.NoError(t, err)
 }
 

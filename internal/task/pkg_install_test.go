@@ -43,7 +43,10 @@ func TestPkgInstall_InstallsMissingPackages(t *testing.T) {
 	result := task.Run(context.Background())
 
 	assert.Equal(t, StatusDone, result.Status)
-	assert.Contains(t, result.Message, "installed 2 packages")
+	// New format: "3 pkgs (1 existed, 2 installed)"
+	assert.Contains(t, result.Message, "3 pkgs")
+	assert.Contains(t, result.Message, "1 existed")
+	assert.Contains(t, result.Message, "2 installed")
 	require.Len(t, manager.installCalls, 1)
 	assert.ElementsMatch(t, []string{"curl", "ripgrep"}, manager.installCalls[0])
 }
@@ -127,8 +130,9 @@ func TestPkgInstall_InstallsCasksOnDarwin(t *testing.T) {
 	result := task.Run(context.Background())
 
 	assert.Equal(t, StatusDone, result.Status)
-	assert.Contains(t, result.Message, "installed 1 packages")
-	assert.Contains(t, result.Message, "installed 2 casks")
+	// New format: "1 pkg installed | 2 casks installed"
+	assert.Contains(t, result.Message, "1 pkg")
+	assert.Contains(t, result.Message, "2 casks")
 	require.Len(t, manager.caskCalls, 1)
 	assert.ElementsMatch(t, []string{"firefox", "vscode"}, manager.caskCalls[0])
 }
@@ -280,6 +284,66 @@ func TestPkgInstall_Name_BoundaryConditions(t *testing.T) {
 					assert.Contains(t, name, "4 casks")
 				}
 			}
+		})
+	}
+}
+
+func TestFormatInstallStats(t *testing.T) {
+	tests := []struct {
+		name      string
+		category  string
+		skipped   int
+		installed int
+		expected  string
+	}{
+		{
+			name:      "all installed",
+			category:  "pkg",
+			skipped:   0,
+			installed: 3,
+			expected:  "3 pkgs installed",
+		},
+		{
+			name:      "all skipped",
+			category:  "pkg",
+			skipped:   5,
+			installed: 0,
+			expected:  "5 pkgs (all existed)",
+		},
+		{
+			name:      "mixed packages",
+			category:  "pkg",
+			skipped:   31,
+			installed: 2,
+			expected:  "33 pkgs (31 existed, 2 installed)",
+		},
+		{
+			name:      "mixed casks",
+			category:  "cask",
+			skipped:   10,
+			installed: 5,
+			expected:  "15 casks (10 existed, 5 installed)",
+		},
+		{
+			name:      "single package installed",
+			category:  "pkg",
+			skipped:   0,
+			installed: 1,
+			expected:  "1 pkgs installed",
+		},
+		{
+			name:      "single package skipped",
+			category:  "pkg",
+			skipped:   1,
+			installed: 0,
+			expected:  "1 pkg (all existed)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatInstallStats(tt.category, tt.skipped, tt.installed)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
@@ -695,9 +759,15 @@ func TestNewPkgInstallFactory_CreatesHomebrewManagerOnDarwin(t *testing.T) {
 		},
 	}
 
+	// Mock PathFinder to return consistent "brew" path for testing
+	mockPathFinder := func() (string, bool) {
+		return "brew", true
+	}
+
 	factory := NewPkgInstallFactory(PkgInstallConfig{
-		OS:     "darwin",
-		Runner: mockRunner,
+		OS:         "darwin",
+		Runner:     mockRunner,
+		PathFinder: mockPathFinder,
 	})
 
 	tasks, err := factory(args)

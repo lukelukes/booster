@@ -6,6 +6,7 @@ import (
 	"booster/internal/config"
 	"context"
 	"fmt"
+	"time"
 )
 
 // Status represents the outcome of a task execution.
@@ -21,10 +22,11 @@ const (
 
 // Result holds the outcome of executing a task.
 type Result struct {
-	Error   error
-	Message string
-	Output  string // Command output (stdout/stderr) if any
-	Status  Status
+	Error    error
+	Message  string
+	Output   string // Command output (stdout/stderr) if any
+	Status   Status
+	Duration time.Duration // How long the task took to execute
 }
 
 // Task is a single executable action.
@@ -35,10 +37,24 @@ type Task interface {
 	// Run executes the task. It should be idempotent.
 	// Returns StatusSkipped if already in desired state.
 	Run(ctx context.Context) Result
+
+	// NeedsSudo returns true if this task requires elevated privileges.
+	// This is used to prompt for sudo credentials before the TUI starts.
+	NeedsSudo() bool
 }
 
 // Factory creates Task instances from raw args.
 type Factory func(args any) ([]Task, error)
+
+// AnyNeedsSudo returns true if any task in the slice requires sudo.
+func AnyNeedsSudo(tasks []Task) bool {
+	for _, t := range tasks {
+		if t.NeedsSudo() {
+			return true
+		}
+	}
+	return false
+}
 
 // Builder creates executable tasks from configuration.
 // Use NewBuilder to create an instance, then register factories with Register.

@@ -46,6 +46,11 @@ func (t *GitConfig) Name() string {
 	return "configure git: " + strings.Join(keys, ", ")
 }
 
+// NeedsSudo returns false - git config operates on user config files.
+func (t *GitConfig) NeedsSudo() bool {
+	return false
+}
+
 // Run executes the git configuration. It is idempotent.
 // For each item:
 //   - If Value is set explicitly: set it unconditionally

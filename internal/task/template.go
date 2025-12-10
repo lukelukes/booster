@@ -38,6 +38,11 @@ func (t *TemplateRender) Name() string {
 	return fmt.Sprintf("render %s → %s", filepath.Base(t.Source), filepath.Base(t.Target))
 }
 
+// NeedsSudo returns false - template rendering targets user files.
+func (t *TemplateRender) NeedsSudo() bool {
+	return false
+}
+
 // Run executes the template rendering. It's idempotent - skips if output matches.
 func (t *TemplateRender) Run(ctx context.Context) Result {
 	source := pathutil.Expand(t.Source)

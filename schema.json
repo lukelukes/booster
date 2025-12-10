@@ -58,11 +58,6 @@
           "$ref": "#/$defs/when",
           "description": "Conditional execution based on OS or profile"
         },
-        "prompt_for_sudo": {
-          "type": "boolean",
-          "default": false,
-          "description": "Prompt for sudo credentials before execution (Linux only)"
-        },
         "args": {
           "description": "Action-specific arguments"
         }

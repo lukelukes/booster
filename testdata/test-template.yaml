@@ -1,0 +1,19 @@
+version: "1"
+
+variables:
+  Name:
+    prompt: "Your full name"
+    default: "Test User"
+  Email:
+    prompt: "Your email address"
+    default: "test@example.com"
+
+tasks:
+  - action: "dir.create"
+    args:
+      - "/tmp/booster-test"
+
+  - action: "template.render"
+    args:
+      - source: "testdata/templates/gitconfig.tmpl"
+        target: "/tmp/booster-test/gitconfig"

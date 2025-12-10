@@ -1,0 +1,152 @@
+version: "2"
+
+run:
+  tests: true
+  modules-download-mode: readonly
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - bidichk
+    - dupl
+    - errcheck
+    - forbidigo
+    - gocritic
+    - govet
+    - ineffassign
+    - mirror
+    - modernize
+    - nakedret
+    - nolintlint
+    - perfsprint
+    - revive
+    - staticcheck
+    - testifylint
+    - unconvert
+    - unparam
+    - unused
+    - usestdlibvars
+    - usetesting
+    - wastedassign
+  settings:
+    nolintlint:
+      allow-unused: false
+      require-explanation: true
+      require-specific: true
+    gocritic:
+      enabled-checks:
+        - equalFold
+      disabled-checks:
+        - ifElseChain
+        - singleCaseSwitch
+    revive:
+      severity: error
+      rules:
+        - name: atomic
+        - name: bare-return
+        - name: blank-imports
+        - name: constant-logical-expr
+        - name: context-as-argument
+        - name: context-keys-type
+#        - name: cyclomatic - reenable later
+        - name: dot-imports
+        - name: duplicated-imports
+        - name: empty-lines
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: exported
+        - name: identical-branches
+        - name: if-return
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: modifies-value-receiver
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: string-of-int
+        - name: superfluous-else
+        - name: time-naming
+        - name: unconditional-recursion
+        - name: unexported-return
+        - name: unreachable-code
+        - name: var-declaration
+        - name: var-naming
+          arguments:
+            - []
+            - []
+            - - skip-package-name-checks: true
+    staticcheck:
+      checks:
+        - all
+        - -ST1003
+        - -ST1005
+        - -QF1001
+        - -QF1006
+        - -QF1008
+    testifylint:
+      disable:
+        - go-require
+        - require-error
+    usetesting:
+      os-temp-dir: true
+    modernize:
+      disable:
+        - stringsbuilder
+    perfsprint:
+      concat-loop: false
+    govet:
+      enable:
+        - nilness
+        - unusedwrite
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - dupl
+          - errcheck
+          - gocyclo
+          - gosec
+          - staticcheck
+          - unparam
+        path: _test\.go
+      - linters:
+          - forbidigo
+        path: cmd
+      - linters:
+          - revive
+        path: _test\.go
+        text: 'cyclomatic'
+
+formatters:
+  enable:
+    - gofumpt
+  settings:
+    gofumpt:
+      extra-rules: true
+
+output:
+  formats:
+    text:
+      path: stdout
+      print-issued-lines: true
+      print-linter-name: true
+    junit-xml:
+      path: './out/lint.xml'
+  show-stats: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  new: false
+
+severity:
+  default: error

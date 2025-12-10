@@ -1,0 +1,337 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/lukeshiner/booster/bootstrap.schema.json",
+  "title": "Booster Bootstrap Configuration",
+  "description": "Schema for booster bootstrap.yaml configuration files",
+  "type": "object",
+  "required": ["version", "tasks"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1",
+      "description": "Configuration schema version (must be \"1\")"
+    },
+    "profiles": {
+      "type": "array",
+      "description": "List of available profile names for conditional task execution",
+      "items": {
+        "type": "string"
+      },
+      "examples": [["personal", "work"]]
+    },
+    "variables": {
+      "type": "object",
+      "description": "Variable definitions for template rendering",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "description": "List of tasks to execute",
+      "items": {
+        "$ref": "#/$defs/task"
+      }
+    }
+  },
+  "$defs": {
+    "task": {
+      "type": "object",
+      "required": ["action"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "dir.create",
+            "symlink.create",
+            "template.render",
+            "pkg.install",
+            "pkg-manager.install",
+            "mise.use",
+            "git.config",
+            "set.darwin.defaults"
+          ],
+          "description": "The action type to execute"
+        },
+        "when": {
+          "$ref": "#/$defs/when",
+          "description": "Conditional execution based on OS or profile"
+        },
+        "prompt_for_sudo": {
+          "type": "boolean",
+          "default": false,
+          "description": "Prompt for sudo credentials before execution (Linux only)"
+        },
+        "args": {
+          "description": "Action-specific arguments"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "action": { "const": "dir.create" } },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "args": { "$ref": "#/$defs/args-dir-create" }
+            },
+            "required": ["args"]
+          }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "symlink.create" } },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "args": { "$ref": "#/$defs/args-symlink-create" }
+            },
+            "required": ["args"]
+          }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "template.render" } },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "args": { "$ref": "#/$defs/args-template-render" }
+            },
+            "required": ["args"]
+          }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "pkg.install" } },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "args": { "$ref": "#/$defs/args-pkg-install" }
+            },
+            "required": ["args"]
+          }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "pkg-manager.install" } },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "args": { "$ref": "#/$defs/args-pkg-manager-install" }
+            },
+            "required": ["args"]
+          }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "mise.use" } },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "args": { "$ref": "#/$defs/args-mise-use" }
+            },
+            "required": ["args"]
+          }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "git.config" } },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "args": { "$ref": "#/$defs/args-git-config" }
+            },
+            "required": ["args"]
+          }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "set.darwin.defaults" } },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "args": { "$ref": "#/$defs/args-darwin-defaults" }
+            },
+            "required": ["args"]
+          }
+        }
+      ]
+    },
+    "when": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "os": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": ["darwin", "arch"],
+              "description": "Single OS to match"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["darwin", "arch"]
+              },
+              "description": "List of OSes to match (any match = execute)"
+            }
+          ],
+          "description": "Operating system condition"
+        },
+        "profile": {
+          "oneOf": [
+            {
+              "type": "string",
+              "description": "Single profile to match"
+            },
+            {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "List of profiles to match (any match = execute)"
+            }
+          ],
+          "description": "Profile condition"
+        }
+      }
+    },
+    "args-dir-create": {
+      "type": "array",
+      "description": "List of directory paths to create",
+      "items": {
+        "type": "string",
+        "description": "Directory path (supports ~ expansion)"
+      },
+      "examples": [["~/dev", "~/.config", "~/.local/bin"]]
+    },
+    "args-symlink-create": {
+      "type": "array",
+      "description": "List of symlink source/target pairs",
+      "items": {
+        "type": "object",
+        "required": ["source", "target"],
+        "additionalProperties": false,
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "Source file path (must exist)"
+          },
+          "target": {
+            "type": "string",
+            "description": "Target symlink path to create"
+          }
+        }
+      }
+    },
+    "args-template-render": {
+      "type": "array",
+      "description": "List of template source/target pairs",
+      "items": {
+        "type": "object",
+        "required": ["source", "target"],
+        "additionalProperties": false,
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "Template source file path (.tmpl)"
+          },
+          "target": {
+            "type": "string",
+            "description": "Rendered output file path"
+          }
+        }
+      }
+    },
+    "args-pkg-install": {
+      "type": "array",
+      "description": "List of packages to install (strings or structured objects)",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "Package name"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "packages": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "List of regular packages"
+              },
+              "casks": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "List of Homebrew casks (macOS only)"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "args-pkg-manager-install": {
+      "type": "array",
+      "description": "List of package managers to install",
+      "items": {
+        "type": "string",
+        "enum": ["paru", "yay", "homebrew"],
+        "description": "Package manager name"
+      }
+    },
+    "args-mise-use": {
+      "type": "array",
+      "description": "List of tools with versions in tool@version format",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9_-]+@[a-zA-Z0-9._-]+$",
+        "description": "Tool specification (e.g., go@1.22.0, node@20.10.0)"
+      },
+      "examples": [["go@1.22.0", "node@20.10.0", "rust@1.75.0"]]
+    },
+    "args-git-config": {
+      "type": "array",
+      "description": "List of git configuration items",
+      "items": {
+        "type": "object",
+        "required": ["key"],
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "Git config key (e.g., user.name, user.email)"
+          },
+          "value": {
+            "type": "string",
+            "description": "Value to set (if not prompting)"
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Prompt text to ask user for value"
+          }
+        }
+      }
+    },
+    "args-darwin-defaults": {
+      "type": "object",
+      "required": ["file"],
+      "additionalProperties": false,
+      "description": "macOS defaults configuration",
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "Path to YAML file containing macOS defaults"
+        }
+      }
+    }
+  }
+}

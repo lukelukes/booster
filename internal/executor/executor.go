@@ -4,6 +4,7 @@ package executor
 import (
 	"booster/internal/task"
 	"context"
+	"time"
 )
 
 // Summary holds aggregate statistics after execution.
@@ -11,6 +12,7 @@ type Summary struct {
 	Done        int
 	Skipped     int
 	Failed      int
+	Pending     int
 	HasFailures bool
 }
 
@@ -18,9 +20,12 @@ type Summary struct {
 // An Executor is NOT safe for concurrent use from multiple goroutines.
 // Create separate Executor instances for concurrent task execution.
 type Executor struct {
-	tasks   []task.Task
-	results []task.Result
-	current int
+	tasks     []task.Task
+	results   []task.Result
+	current   int
+	aborted   bool
+	startTime time.Time
+	endTime   time.Time // Frozen when execution stops
 }
 
 // New creates an Executor for the given tasks.
@@ -50,6 +55,20 @@ func (e *Executor) Done() bool {
 	return e.current >= len(e.tasks)
 }
 
+// Abort stops execution early. Subsequent calls to RunNext will return false.
+func (e *Executor) Abort() {
+	if !e.aborted {
+		e.aborted = true
+		e.endTime = time.Now()
+	}
+}
+
+// Stopped returns true if execution has stopped, either by completing all tasks
+// or by being aborted early (e.g., due to a task failure).
+func (e *Executor) Stopped() bool {
+	return e.aborted || e.Done()
+}
+
 // Tasks returns the list of tasks.
 func (e *Executor) Tasks() []task.Task {
 	return e.tasks
@@ -69,19 +88,45 @@ func (e *Executor) ResultAt(i int) task.Result {
 }
 
 // RunNext executes the next pending task and returns its result.
-// Returns false if no tasks remain.
+// Returns false if no tasks remain or execution was aborted.
 // RunNext is NOT safe for concurrent calls; use from a single goroutine only.
 func (e *Executor) RunNext(ctx context.Context) (task.Result, bool) {
-	if e.Done() {
+	if e.Stopped() {
 		return task.Result{}, false
 	}
 
+	// Record start time on first task
+	if e.current == 0 {
+		e.startTime = time.Now()
+	}
+
 	t := e.tasks[e.current]
+	taskStart := time.Now()
 	result := t.Run(ctx)
+	result.Duration = time.Since(taskStart)
 	e.results[e.current] = result
 	e.current++
 
+	// Freeze end time when all tasks complete
+	if e.Done() {
+		e.endTime = time.Now()
+	}
+
 	return result, true
+}
+
+// ElapsedTime returns the total time elapsed since execution started.
+// Returns 0 if no tasks have been executed yet.
+// When execution has stopped (completed or aborted), returns the frozen duration.
+func (e *Executor) ElapsedTime() time.Duration {
+	if e.startTime.IsZero() {
+		return 0
+	}
+	// Use frozen end time if execution has stopped
+	if !e.endTime.IsZero() {
+		return e.endTime.Sub(e.startTime)
+	}
+	return time.Since(e.startTime)
 }
 
 // Summary returns aggregate statistics for all executed tasks.
@@ -95,6 +140,8 @@ func (e *Executor) Summary() Summary {
 			s.Skipped++
 		case task.StatusFailed:
 			s.Failed++
+		case task.StatusPending:
+			s.Pending++
 		}
 	}
 	s.HasFailures = s.Failed > 0

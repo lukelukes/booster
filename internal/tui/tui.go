@@ -3,24 +3,76 @@ package tui
 
 import (
 	"booster/internal/executor"
+	"booster/internal/logstream"
 	"booster/internal/task"
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+)
+
+const (
+	maxLogLines      = 8  // Number of log lines to display
+	outputViewHeight = 15 // Height of output viewport in lines
+)
+
+// Spinner frames - Braille dots spinner for professional look
+var spinnerFrames = []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"}
+
+// FocusPanel represents which panel has focus in two-column mode.
+type FocusPanel int
+
+const (
+	FocusTaskList FocusPanel = iota
+	FocusLogs
 )
 
 // Model is the Bubble Tea model for the TUI.
 type Model struct {
 	exec       *executor.Executor
 	showOutput bool // Toggle to show command output
+	showLogs   bool // Toggle to show logs panel (default: true)
+	width      int  // Terminal width (tracked for resize handling)
+	height     int  // Terminal height (tracked for resize handling)
+
+	// Scrollable output viewport
+	outputViewport viewport.Model
+
+	// Scrollable log viewport for two-column mode
+	logViewport viewport.Model
+
+	// Scrollable task list viewport for two-column mode
+	taskViewport viewport.Model
+
+	// Streaming log support - log history per task
+	logHistory   map[int][]string         // task index -> log lines (persisted)
+	currentLogs  []string                 // accumulator for running task
+	logCh        <-chan string            // Channel to receive log lines
+	logWriter    *logstream.ChannelWriter // Writer to close when task completes
+	selectedTask int                      // highlighted task index
+	focusedPanel FocusPanel               // which panel has focus (TaskList or Logs)
+
+	// Coordination state for log/task completion race condition fix
+	pendingResult *task.Result // holds task result if arrived before logs finished
+	logsDone      bool         // true when logDoneMsg received for current task
+
+	// Spinner animation state
+	spinnerFrame int // Current spinner animation frame (0-7)
 }
 
 // New creates a new TUI model with the given tasks.
 func New(tasks []task.Task) Model {
 	return Model{
-		exec: executor.New(tasks),
+		exec:         executor.New(tasks),
+		showLogs:     true, // Logs panel visible by default
+		logHistory:   make(map[int][]string),
+		currentLogs:  []string{},
+		selectedTask: 0,
+		focusedPanel: FocusTaskList,
 	}
 }
 
@@ -29,74 +81,371 @@ func (m Model) Init() tea.Cmd {
 	if m.exec.Done() {
 		return nil
 	}
-	return m.runNext()
+	// Use a message to trigger task start so state merges properly in Update
+	return func() tea.Msg {
+		return startTaskMsg{}
+	}
 }
+
+// startTaskMsg signals that a task should be started.
+type startTaskMsg struct{}
 
 // taskDoneMsg signals a task completed.
 type taskDoneMsg struct {
 	result task.Result
 }
 
+// logLineMsg delivers a log line from the running task.
+type logLineMsg struct {
+	line string
+}
+
+// logDoneMsg signals no more log lines (channel closed).
+type logDoneMsg struct{}
+
+// spinnerTickMsg triggers spinner animation frame update.
+type spinnerTickMsg struct{}
+
 // Update handles messages.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
-			return m, tea.Quit
-		case "enter":
-			if m.exec.Done() {
-				return m, tea.Quit
-			}
-		case "o":
-			if m.exec.Done() {
-				m.showOutput = !m.showOutput
+	case tea.MouseMsg:
+		// Handle mouse wheel scrolling for logs panel (works without focus)
+		if m.isTwoColumn() && m.showLogs {
+			switch msg.Button {
+			case tea.MouseButtonWheelUp:
+				m.logViewport.ScrollUp(3)
+				return m, nil
+			case tea.MouseButtonWheelDown:
+				m.logViewport.ScrollUp(3)
 				return m, nil
 			}
 		}
 
-	case taskDoneMsg:
-		if m.exec.Done() {
+	case tea.KeyMsg:
+		// In two-column mode, handle focus-based navigation (both running and stopped)
+		if m.isTwoColumn() {
+			switch msg.String() {
+			case "o":
+				// Toggle logs panel visibility
+				m.showLogs = !m.showLogs
+				return m, nil
+
+			case "tab":
+				// Toggle focus between panels
+				if m.focusedPanel == FocusTaskList {
+					m.focusedPanel = FocusLogs
+				} else {
+					m.focusedPanel = FocusTaskList
+				}
+				return m, nil
+
+			case "j", "down":
+				if m.focusedPanel == FocusTaskList {
+					// Navigate to next task
+					if m.selectedTask < m.exec.Total()-1 {
+						m.selectedTask++
+						m.ensureTaskVisible()
+					}
+					// Update log viewport with selected task's history when stopped
+					if m.exec.Stopped() {
+						m.updateLogViewportForSelectedTask()
+					}
+				} else {
+					// Scroll logs down
+					m.logViewport.ScrollDown(1)
+				}
+				return m, nil
+
+			case "k", "up":
+				if m.focusedPanel == FocusTaskList {
+					// Navigate to previous task
+					if m.selectedTask > 0 {
+						m.selectedTask--
+						m.ensureTaskVisible()
+					}
+					// Update log viewport with selected task's history when stopped
+					if m.exec.Stopped() {
+						m.updateLogViewportForSelectedTask()
+					}
+				} else {
+					// Scroll logs up
+					m.logViewport.ScrollUp(1)
+				}
+				return m, nil
+
+			case "G":
+				if m.focusedPanel == FocusLogs {
+					m.logViewport.GotoBottom()
+				}
+				return m, nil
+
+			case "q", "ctrl+c":
+				return m, tea.Quit
+
+			case "enter":
+				if m.exec.Stopped() {
+					return m, tea.Quit
+				}
+			}
 			return m, nil
 		}
-		return m, m.runNext()
+
+		switch msg.String() {
+		case "q", "ctrl+c":
+			return m, tea.Quit
+		case "enter":
+			if m.exec.Stopped() {
+				return m, tea.Quit
+			}
+		case "o":
+			if m.exec.Stopped() {
+				m.showOutput = !m.showOutput
+				if m.showOutput {
+					// Initialize viewport with output content
+					m.outputViewport = m.createOutputViewport()
+				}
+				return m, nil
+			}
+		default:
+			// Delegate scroll keys to viewport when output is shown
+			if m.showOutput && m.exec.Stopped() {
+				var cmd tea.Cmd
+				m.outputViewport, cmd = m.outputViewport.Update(msg)
+				return m, cmd
+			}
+		}
+
+	case startTaskMsg:
+		// startTask returns state that we merge into model here
+		// This is the proper BubbleTea pattern for value-based models
+		logWriter, logCh, cmd := m.startTask()
+		m.logWriter = logWriter
+		m.logCh = logCh
+
+		// Reset coordination state for new task
+		m.logsDone = false
+		m.pendingResult = nil
+
+		// Initialize viewports if in two-column mode
+		if m.isTwoColumnRunning() {
+			contentWidth, contentHeight := m.contentDimensions()
+			layout := NewLayout(contentWidth, contentHeight)
+
+			// Log viewport
+			m.logViewport = viewport.New(
+				layout.RightWidth-2, // Panel border takes 2 chars (left + right)
+				layout.Height-5,     // Panel border (2) + title (1) + help bar (2)
+			)
+			m.logViewport.SetContent("")
+
+			// Task list viewport - height excludes progress bar (2 lines + blank)
+			taskViewportHeight := max(
+				// border(2) + title(1) + progress(2) + blank(1) + help(2)
+				layout.Height-8, 3)
+			m.taskViewport = viewport.New(
+				layout.LeftWidth-4, // Panel border(2) + padding(2)
+				taskViewportHeight,
+			)
+		}
+
+		return m, cmd
+
+	case spinnerTickMsg:
+		// Increment spinner frame
+		m.spinnerFrame = (m.spinnerFrame + 1) % len(spinnerFrames)
+
+		// Continue spinner animation if still running
+		if !m.exec.Stopped() {
+			return m, spinnerTick()
+		}
+		return m, nil
+
+	case logLineMsg:
+		// Append log line to current task's accumulator
+		m.currentLogs = append(m.currentLogs, msg.line)
+
+		// Update log viewport content for two-column mode
+		if m.isTwoColumnRunning() {
+			// Only auto-scroll if viewport was at bottom (stick to bottom pattern)
+			wasAtBottom := m.logViewport.AtBottom()
+			m.logViewport.SetContent(strings.Join(m.currentLogs, "\n"))
+			if wasAtBottom {
+				m.logViewport.GotoBottom()
+			}
+		}
+
+		return m, listenForLogs(m.logCh)
+
+	case logDoneMsg:
+		// Log channel closed - all logs for current task have been received
+		m.logsDone = true
+
+		// If we have a pending task result (taskDoneMsg arrived first), process it now
+		if m.pendingResult != nil {
+			return m.completeTask(*m.pendingResult)
+		}
+		return m, nil
+
+	case taskDoneMsg:
+		// If logs are still streaming, defer processing until logDoneMsg arrives
+		if !m.logsDone {
+			m.pendingResult = &msg.result
+			return m, nil
+		}
+
+		// Logs already done, process immediately
+		return m.completeTask(msg.result)
+
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+
+		// Calculate content dimensions (account for app container)
+		contentWidth, contentHeight := m.contentDimensions()
+
+		// Update viewport size if output is shown
+		if m.showOutput {
+			m.outputViewport.Width = contentWidth
+			m.outputViewport.Height = min(outputViewHeight, contentHeight/2)
+		}
+		// Update viewport sizes for two-column mode
+		if m.isTwoColumn() {
+			layout := NewLayout(contentWidth, contentHeight)
+			m.logViewport.Width = layout.RightWidth - 2 // Panel border takes 2 chars (left + right)
+			m.logViewport.Height = layout.Height - 5    // Panel border (2) + title (1) + help bar (2)
+
+			// Task viewport
+			taskViewportHeight := max(
+				// border(2) + title(1) + progress(2) + blank(1) + help(2)
+				layout.Height-8, 3)
+			m.taskViewport.Width = layout.LeftWidth - 4
+			m.taskViewport.Height = taskViewportHeight
+		}
+		return m, nil
 	}
 
 	return m, nil
 }
 
+// spinner returns the current spinner character for animation.
+func (m Model) spinner() string {
+	return spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
+}
+
+// contentDimensions calculates available space for content within the app container.
+// Container border takes 2 chars (left + right) and 2 lines (top + bottom).
+// Container padding takes 2 chars (left + right) horizontally.
+// Total overhead: 4 chars width, 2 lines height.
+func (m Model) contentDimensions() (width, height int) {
+	width = m.width - 4
+	height = m.height - 2
+
+	if width < 10 {
+		width = 10
+	}
+	if height < 3 {
+		height = 3
+	}
+
+	return width, height
+}
+
 // View renders the TUI.
 func (m Model) View() string {
-	var s strings.Builder
+	contentWidth, contentHeight := m.contentDimensions()
 
-	s.WriteString(titleStyle.Render("BOOSTER"))
-	s.WriteString("\n\n")
+	// Create layout with adjusted dimensions
+	layout := NewLayout(contentWidth, contentHeight)
+
+	var content string
+	// Use two-column layout for wide terminals (both running and stopped)
+	if layout.IsTwoColumn() {
+		content = m.renderTwoColumn(layout)
+	} else {
+		// Single-column rendering for narrow terminals
+		content = m.renderSingleColumn()
+	}
+
+	// Wrap content in app container
+	// Don't set Width/Height on the container - let content flow naturally
+	// The content is already sized correctly for the terminal
+	if m.width > 0 && m.height > 0 {
+		return appContainerStyle.Render(content)
+	}
+
+	return content
+}
+
+// renderSingleColumn renders the traditional single-column layout.
+func (m Model) renderSingleColumn() string {
+	var s strings.Builder
 
 	tasks := m.exec.Tasks()
 	current := m.exec.Current()
-	done := m.exec.Done()
+	stopped := m.exec.Stopped()
+	total := m.exec.Total()
+
+	// Count completed tasks for progress
+	completed := 0
+	for i := range tasks {
+		r := m.exec.ResultAt(i)
+		if r.Status != task.StatusPending {
+			completed++
+		}
+	}
+
+	// Header with progress bar (always show)
+	s.WriteString(titleStyle.Render("BOOSTER"))
+	s.WriteString("\n")
+
+	// Progress bar while running or at completion
+	barWidth := m.width - 4
+	if barWidth < 20 {
+		barWidth = 40
+	}
+	s.WriteString(RenderProgress(completed, total, m.exec.ElapsedTime(), barWidth))
+	s.WriteString("\n\n")
+
+	// Task list
+	var failedTask *FailureInfo
+	// Calculate available width for task lines
+	availableWidth := max(
+		// Account for container margins
+		m.width-4, 40)
 
 	for i, t := range tasks {
 		var line string
 		r := m.exec.ResultAt(i)
 
 		if r.Status != task.StatusPending {
-			// Completed task
+			// Completed task - show status with dotted leaders
 			switch r.Status {
 			case task.StatusDone:
-				line = doneStyle.Render("✓ " + t.Name())
+				suffix := formatElapsedCompact(r.Duration)
+				taskLine := renderTaskWithLeader("✓ ", t.Name(), suffix, availableWidth)
+				line = doneStyle.Render(taskLine)
 			case task.StatusSkipped:
-				line = skippedStyle.Render("○ " + t.Name() + " (exists)")
-			case task.StatusFailed:
-				errMsg := "unknown error"
-				if r.Error != nil {
-					errMsg = r.Error.Error()
+				label := "exists"
+				if strings.HasPrefix(r.Message, "condition not met:") {
+					label = "skipped"
 				}
-				line = failedStyle.Render("✗ " + t.Name() + ": " + errMsg)
+				taskLine := renderTaskWithLeader("○ ", t.Name(), label, availableWidth)
+				line = skippedStyle.Render(taskLine)
+			case task.StatusFailed:
+				// Store failure info for detailed display later
+				failedTask = &FailureInfo{
+					TaskName: t.Name(),
+					Error:    r.Error,
+					Output:   r.Output,
+					Duration: r.Duration,
+				}
+				// Show simple line in task list
+				line = failedStyle.Render("✗ " + t.Name())
 			}
-		} else if i == current && !done {
-			// Currently running
-			line = runningStyle.Render("→ " + t.Name() + "...")
+		} else if i == current && !stopped {
+			// Currently running with animated spinner
+			line = runningStyle.Render("→ " + t.Name() + " " + m.spinner())
 		} else {
 			// Pending
 			line = pendingStyle.Render("  " + t.Name())
@@ -105,36 +454,67 @@ func (m Model) View() string {
 		s.WriteString(line + "\n")
 	}
 
-	if done {
+	// Show streaming logs while task is running
+	if !stopped && len(m.currentLogs) > 0 {
 		s.WriteString("\n")
+		s.WriteString(logHeaderStyle.Render("─── logs ───"))
+		s.WriteString("\n")
+		// Display only the last maxLogLines to keep view manageable
+		displayLogs := m.currentLogs
+		if len(displayLogs) > maxLogLines {
+			displayLogs = displayLogs[len(displayLogs)-maxLogLines:]
+		}
+		for _, line := range displayLogs {
+			// Truncate long lines to terminal width
+			displayLine := line
+			maxWidth := m.width - 4 // Leave some margin
+			if maxWidth > 0 && len(displayLine) > maxWidth {
+				displayLine = displayLine[:maxWidth-3] + "..."
+			}
+			s.WriteString(logLineStyle.Render(displayLine))
+			s.WriteString("\n")
+		}
+	}
 
+	if stopped {
 		summary := m.exec.Summary()
 
+		// Show failure box if there was a failure
+		if failedTask != nil {
+			s.WriteString("\n")
+			failWidth := m.width
+			if failWidth < 40 {
+				failWidth = 60
+			}
+			s.WriteString(RenderFailure(*failedTask, failWidth))
+		}
+
+		// Show summary screen
+		s.WriteString("\n")
+		summaryData := m.buildSummaryData()
+		summaryWidth := m.width
+		if summaryWidth < 40 {
+			summaryWidth = 60
+		}
+
 		if summary.HasFailures {
-			s.WriteString(summaryStyle.Render(
-				fmt.Sprintf("Finished with errors: %d done, %d skipped, %d failed",
-					summary.Done, summary.Skipped, summary.Failed)))
+			s.WriteString(RenderFailedSummary(summaryData, summaryWidth))
 		} else {
-			s.WriteString(summaryStyle.Render(
-				fmt.Sprintf("Done! %d completed, %d skipped", summary.Done, summary.Skipped)))
+			s.WriteString(RenderSummary(summaryData, summaryWidth))
 		}
 
 		// Show output section if toggled
 		if m.showOutput {
 			s.WriteString("\n")
-			s.WriteString(outputHeaderStyle.Render("─── Output ───"))
-			s.WriteString("\n")
-
-			for i, t := range tasks {
-				r := m.exec.ResultAt(i)
-				if r.Output != "" {
-					s.WriteString("\n")
-					s.WriteString(outputTaskStyle.Render(t.Name()))
-					s.WriteString("\n")
-					s.WriteString(outputContentStyle.Render(strings.TrimSpace(r.Output)))
-					s.WriteString("\n")
-				}
+			scrollHint := ""
+			if m.outputViewport.TotalLineCount() > m.outputViewport.Height {
+				scrollHint = fmt.Sprintf(" (↑↓/j/k to scroll, %d%%)",
+					int(m.outputViewport.ScrollPercent()*100))
 			}
+			s.WriteString(outputHeaderStyle.Render("─── Output" + scrollHint + " ───"))
+			s.WriteString("\n")
+			s.WriteString(m.outputViewport.View())
+			s.WriteString("\n")
 		}
 
 		// Build help text
@@ -142,24 +522,477 @@ func (m Model) View() string {
 		hasOutput := m.hasTaskOutput()
 		if hasOutput {
 			if m.showOutput {
-				s.WriteString(helpStyle.Render("Press 'o' to hide output, Enter to exit"))
+				s.WriteString(helpStyle.Render("'o' hide • ↑↓/j/k scroll • Enter exit"))
 			} else {
-				s.WriteString(helpStyle.Render("Press 'o' to view output, Enter to exit"))
+				s.WriteString(helpStyle.Render("'o' view output • Enter exit"))
 			}
 		} else {
-			s.WriteString(helpStyle.Render("Press Enter to exit"))
+			s.WriteString(helpStyle.Render("Enter exit"))
 		}
 	}
 
 	return s.String()
 }
 
-// runNext creates a command to run the next task.
-func (m Model) runNext() tea.Cmd {
+// renderTwoColumn renders the two-column layout for wide terminals (while running).
+func (m Model) renderTwoColumn(layout Layout) string {
+	// Determine border colors based on focus
+	leftBorderColor := UnfocusedBorderColor
+	rightBorderColor := UnfocusedBorderColor
+	if m.showLogs && m.focusedPanel == FocusTaskList {
+		leftBorderColor = FocusedBorderColor
+	} else if m.showLogs && m.focusedPanel == FocusLogs {
+		rightBorderColor = FocusedBorderColor
+	} else if !m.showLogs {
+		leftBorderColor = FocusedBorderColor
+	}
+
+	// Render left panel (task list)
+	var leftPanel Panel
+	leftFocused := m.focusedPanel == FocusTaskList || !m.showLogs
+	if m.showLogs {
+		leftContent := m.renderTaskListContent(layout.LeftWidth - 4)
+		leftPanel = Panel{
+			Title:       "BOOSTER",
+			Content:     leftContent,
+			Width:       layout.LeftWidth,
+			Height:      layout.Height - 3, // Reserve 3 lines for help bar
+			BorderColor: leftBorderColor,
+			Focused:     leftFocused,
+		}
+	} else {
+		// Expand task list to full width when logs hidden
+		leftContent := m.renderTaskListContent(layout.LeftWidth + layout.RightWidth - 2) // -2 for panel borders
+		leftPanel = Panel{
+			Title:       "BOOSTER",
+			Content:     leftContent,
+			Width:       layout.LeftWidth + layout.RightWidth,
+			Height:      layout.Height - 3,
+			BorderColor: leftBorderColor,
+			Focused:     leftFocused,
+		}
+	}
+
+	// Build the view based on showLogs
+	var panels string
+	if m.showLogs {
+		// Render right panel (logs)
+		logs := m.getDisplayLogs()
+		rightContent := m.logViewport.View()
+		if len(logs) == 0 {
+			rightContent = m.renderEmptyLogContent()
+		}
+
+		// Determine task name for title
+		// When stopped: show selected task name
+		// When running: show current task name
+		var taskName string
+		if m.exec.Stopped() {
+			if m.selectedTask < len(m.exec.Tasks()) {
+				taskName = m.exec.Tasks()[m.selectedTask].Name()
+			}
+		} else {
+			if m.exec.Current() < len(m.exec.Tasks()) {
+				taskName = m.exec.Tasks()[m.exec.Current()].Name()
+			}
+		}
+
+		// Build title with scroll indicator
+		logTitle := taskName
+		lineCount := m.logViewport.TotalLineCount()
+		if lineCount > 0 {
+			logTitle = fmt.Sprintf("%s • %d lines", taskName, lineCount)
+		}
+		if m.logViewport.TotalLineCount() > m.logViewport.Height {
+			scrollPct := int(m.logViewport.ScrollPercent() * 100)
+			logTitle = fmt.Sprintf("%s (%d%%)", logTitle, scrollPct)
+		}
+		// Add arrow indicator if not at bottom
+		if !m.logViewport.AtBottom() && m.logViewport.TotalLineCount() > 0 {
+			logTitle += " ▼"
+		}
+
+		rightPanel := Panel{
+			Title:       "Logs: " + logTitle,
+			Content:     rightContent,
+			Width:       layout.RightWidth,
+			Height:      layout.Height - 3, // Reserve 3 lines for help bar
+			BorderColor: rightBorderColor,
+			Focused:     m.focusedPanel == FocusLogs,
+		}
+
+		// Join panels horizontally
+		leftRendered := RenderPanel(leftPanel)
+		rightRendered := RenderPanel(rightPanel)
+		panels = lipgloss.JoinHorizontal(lipgloss.Top, leftRendered, rightRendered)
+	} else {
+		// Only show task list (full width)
+		panels = RenderPanel(leftPanel)
+	}
+
+	// Add help bar at bottom
+	var helpText string
+	if m.exec.Stopped() {
+		if m.showLogs {
+			helpText = helpStyle.Render("enter exit • o hide logs • tab switch • ↑↓/j/k navigate/scroll")
+		} else {
+			helpText = helpStyle.Render("enter exit • o show logs • ↑↓/j/k navigate")
+		}
+	} else {
+		if m.showLogs {
+			helpText = helpStyle.Render("q quit • o hide logs • tab switch panel • ↑↓/j/k navigate/scroll • G bottom")
+		} else {
+			helpText = helpStyle.Render("q quit • o show logs • ↑↓/j/k navigate")
+		}
+	}
+
+	return panels + "\n" + helpText
+}
+
+// renderTaskListContent renders just the task list content (header, progress, tasks).
+func (m Model) renderTaskListContent(width int) string {
+	var s strings.Builder
+
+	tasks := m.exec.Tasks()
+	total := m.exec.Total()
+
+	// Count completed tasks for progress
+	completed := 0
+	for i := range tasks {
+		r := m.exec.ResultAt(i)
+		if r.Status != task.StatusPending {
+			completed++
+		}
+	}
+
+	// Progress bar
+	barWidth := max(width-4, 20)
+	s.WriteString(RenderProgress(completed, total, m.exec.ElapsedTime(), barWidth))
+	s.WriteString("\n\n")
+
+	// Render task list into viewport and display
+	taskLines := m.renderTaskLines(width)
+	m.taskViewport.SetContent(taskLines)
+	s.WriteString(m.taskViewport.View())
+
+	return s.String()
+}
+
+// renderTaskWithLeader renders a task line with dotted leaders connecting name to status.
+// Example: "✓ Install Homebrew ············· 12.3s"
+// The prefix includes the icon and spacing, name is the task name, suffix is the status/duration.
+// totalWidth is the available width for the entire line.
+func renderTaskWithLeader(prefix, name, suffix string, totalWidth int) string {
+	// Calculate space for leaders
+	// Account for prefix (icon + space) and suffix (status/duration)
+	prefixWidth := lipgloss.Width(prefix)
+	nameWidth := lipgloss.Width(name)
+	suffixWidth := lipgloss.Width(suffix)
+
+	// Calculate leader count (minimum 3 dots for readability)
+	// 2 for spacing around dots (one space before dots, one space before suffix)
+	leaderSpace := max(totalWidth-prefixWidth-nameWidth-suffixWidth-2, 3)
+
+	leaders := leaderStyle.Render(strings.Repeat("·", leaderSpace))
+
+	return prefix + name + " " + leaders + " " + suffix
+}
+
+// renderTaskLines renders just the task list lines (without progress bar) for viewport content.
+func (m Model) renderTaskLines(width int) string {
+	var s strings.Builder
+
+	tasks := m.exec.Tasks()
+	current := m.exec.Current()
+	stopped := m.exec.Stopped()
+
+	for i, t := range tasks {
+		var line string
+		r := m.exec.ResultAt(i)
+		isSelected := i == m.selectedTask
+
+		// Selection indicator prefix
+		prefix := "○ "
+		if isSelected {
+			prefix = "▶ "
+		}
+
+		if r.Status != task.StatusPending {
+			// Completed task - show status with dotted leaders
+			switch r.Status {
+			case task.StatusDone:
+				suffix := formatElapsedCompact(r.Duration)
+				taskLine := renderTaskWithLeader(prefix+"✓ ", t.Name(), suffix, width)
+				line = doneStyle.Render(taskLine)
+			case task.StatusSkipped:
+				label := "exists"
+				if strings.HasPrefix(r.Message, "condition not met:") {
+					label = "skipped"
+				}
+				taskLine := renderTaskWithLeader(prefix+"○ ", t.Name(), label, width)
+				line = skippedStyle.Render(taskLine)
+			case task.StatusFailed:
+				line = failedStyle.Render(prefix + "✗ " + t.Name())
+			}
+		} else if i == current && !stopped {
+			// Currently running with animated spinner
+			line = runningStyle.Render(prefix + "→ " + t.Name() + " " + m.spinner())
+		} else {
+			// Pending
+			line = pendingStyle.Render(prefix + "  " + t.Name())
+		}
+
+		// Apply selection highlight (full row background)
+		if isSelected {
+			// Pad line to consistent width for full-row highlight effect
+			lineWidth := lipgloss.Width(line)
+			if lineWidth < width {
+				line += strings.Repeat(" ", width-lineWidth-4)
+			}
+			line = selectedRowStyle.Render(line)
+		}
+
+		s.WriteString(line)
+		// Don't add newline after last task to avoid extra blank line
+		if i < len(tasks)-1 {
+			s.WriteString("\n")
+		}
+	}
+
+	return s.String()
+}
+
+// isTwoColumnRunning returns true if two-column mode is active (running only).
+func (m Model) isTwoColumnRunning() bool {
+	contentWidth, contentHeight := m.contentDimensions()
+	layout := NewLayout(contentWidth, contentHeight)
+	return layout.IsTwoColumn() && !m.exec.Stopped()
+}
+
+// isTwoColumn returns true if two-column mode is active (both running and stopped).
+func (m Model) isTwoColumn() bool {
+	contentWidth, contentHeight := m.contentDimensions()
+	layout := NewLayout(contentWidth, contentHeight)
+	return layout.IsTwoColumn()
+}
+
+// getDisplayLogs returns the logs to display based on execution state.
+// When running: shows current task logs
+// When stopped: shows historical logs for selected task
+func (m Model) getDisplayLogs() []string {
+	if m.exec.Stopped() {
+		// Show historical logs for selected task
+		if logs, ok := m.logHistory[m.selectedTask]; ok {
+			return logs
+		}
+		return nil
+	}
+	// Show current logs during execution
+	return m.currentLogs
+}
+
+// updateLogViewportForSelectedTask updates the log viewport content
+// to show the historical logs for the currently selected task.
+func (m *Model) updateLogViewportForSelectedTask() {
+	logs := m.getDisplayLogs()
+	if len(logs) > 0 {
+		m.logViewport.SetContent(strings.Join(logs, "\n"))
+	} else {
+		m.logViewport.SetContent("")
+	}
+}
+
+// ensureTaskVisible scrolls the task viewport to keep the selected task visible.
+// Uses a "scroll-into-view" pattern: only scrolls when selection moves outside visible area.
+func (m *Model) ensureTaskVisible() {
+	if m.taskViewport.Height == 0 {
+		return
+	}
+
+	// Each task takes 1 line in the list
+	visibleStart := m.taskViewport.YOffset
+	visibleEnd := visibleStart + m.taskViewport.Height
+
+	// If selected task is above visible area, scroll up
+	if m.selectedTask < visibleStart {
+		m.taskViewport.SetYOffset(m.selectedTask)
+	}
+	// If selected task is below visible area, scroll down
+	if m.selectedTask >= visibleEnd {
+		m.taskViewport.SetYOffset(m.selectedTask - m.taskViewport.Height + 1)
+	}
+}
+
+// initLogViewportForHistory initializes the log viewport for browsing
+// historical logs when execution has stopped.
+func (m *Model) initLogViewportForHistory() {
+	if !m.isTwoColumn() {
+		return
+	}
+
+	contentWidth, contentHeight := m.contentDimensions()
+	layout := NewLayout(contentWidth, contentHeight)
+
+	// Initialize log viewport
+	m.logViewport = viewport.New(
+		layout.RightWidth-2, // Panel border takes 2 chars (left + right)
+		layout.Height-5,     // Panel border (2) + title (1) + help bar (2)
+	)
+
+	// Initialize task viewport
+	taskViewportHeight := max(
+		// border(2) + title(1) + progress(2) + blank(1) + help(2)
+		layout.Height-8, 3)
+	m.taskViewport = viewport.New(
+		layout.LeftWidth-4, // Panel border(2) + padding(2)
+		taskViewportHeight,
+	)
+
+	// Set initial content to first task with logs, or selected task
+	m.selectedTask = 0
+	// Find first task with logs
+	for i := 0; i < m.exec.Total(); i++ {
+		if logs, ok := m.logHistory[i]; ok && len(logs) > 0 {
+			m.selectedTask = i
+			break
+		}
+	}
+	m.updateLogViewportForSelectedTask()
+	m.ensureTaskVisible()
+}
+
+// buildSummaryData constructs SummaryData from executor state.
+func (m Model) buildSummaryData() SummaryData {
+	summary := m.exec.Summary()
+	tasks := m.exec.Tasks()
+
+	// Collect task timings for slowest tasks
+	var timings []TaskTiming
+	for i, t := range tasks {
+		r := m.exec.ResultAt(i)
+		if r.Duration > 0 && r.Status == task.StatusDone {
+			timings = append(timings, TaskTiming{
+				Name:     t.Name(),
+				Duration: r.Duration,
+			})
+		}
+	}
+
+	// Sort by duration descending (simple bubble sort for small list)
+	for i := 0; i < len(timings); i++ {
+		for j := i + 1; j < len(timings); j++ {
+			if timings[j].Duration > timings[i].Duration {
+				timings[i], timings[j] = timings[j], timings[i]
+			}
+		}
+	}
+
+	// Take top 3
+	if len(timings) > 3 {
+		timings = timings[:3]
+	}
+
+	return SummaryData{
+		Done:         summary.Done,
+		Skipped:      summary.Skipped,
+		Failed:       summary.Failed,
+		Total:        m.exec.Total(),
+		Elapsed:      m.exec.ElapsedTime(),
+		SlowestTasks: timings,
+	}
+}
+
+// startTask sets up log streaming and starts the next task.
+// Returns the logWriter, logCh, and command - caller must merge into model.
+// This pattern avoids BubbleTea's value semantics issue where pointer receiver
+// mutations don't propagate through Update's return value.
+func (m Model) startTask() (*logstream.ChannelWriter, <-chan string, tea.Cmd) {
+	// Create log writer for this task
+	logWriter, logCh := logstream.NewChannelWriter(100)
+
+	// Return batch of commands: run task + listen for logs + spinner animation
+	cmd := tea.Batch(
+		runTask(m.exec, logWriter),
+		listenForLogs(logCh),
+		spinnerTick(),
+	)
+
+	return logWriter, logCh, cmd
+}
+
+// completeTask handles task completion after both task execution and log streaming are done.
+// This ensures logs are correctly attributed to tasks regardless of message arrival order.
+func (m Model) completeTask(result task.Result) (Model, tea.Cmd) {
+	// Persist current logs to history for the completed task
+	// Note: exec.Current() points to the NEXT task after RunNext,
+	// so we need to subtract 1 to get the just-completed task index
+	taskIdx := m.exec.Current() - 1
+	if taskIdx >= 0 && len(m.currentLogs) > 0 {
+		m.logHistory[taskIdx] = m.currentLogs
+	}
+
+	// Clear current logs and coordination state for next task
+	m.currentLogs = []string{}
+	m.pendingResult = nil
+	m.logsDone = false
+
+	// Stop execution if task failed
+	if result.Status == task.StatusFailed {
+		m.exec.Abort()
+		// Initialize log viewport for browsing history when stopped
+		m.initLogViewportForHistory()
+		return m, nil
+	}
+	if m.exec.Stopped() {
+		// Initialize log viewport for browsing history when stopped
+		m.initLogViewportForHistory()
+		return m, nil
+	}
+
+	// Auto-advance selected task (if not at last task)
+	if m.selectedTask < m.exec.Total()-1 {
+		m.selectedTask++
+	}
+
+	// Trigger next task via message for proper state handling
+	return m, func() tea.Msg {
+		return startTaskMsg{}
+	}
+}
+
+// runTask executes the current task with log streaming context.
+// Takes exec and logWriter as parameters to avoid data races from capturing
+// receiver fields in the goroutine.
+func runTask(exec *executor.Executor, logWriter *logstream.ChannelWriter) tea.Cmd {
 	return func() tea.Msg {
-		result, _ := m.exec.RunNext(context.Background())
+		ctx := logstream.WithWriter(context.Background(), logWriter)
+		result, _ := exec.RunNext(ctx)
+		logWriter.Close() // Signal end of logs
 		return taskDoneMsg{result: result}
 	}
+}
+
+// listenForLogs waits for the next log line from the channel.
+// Takes channel as parameter to avoid data races from capturing receiver fields.
+func listenForLogs(ch <-chan string) tea.Cmd {
+	if ch == nil {
+		return nil
+	}
+
+	return func() tea.Msg {
+		line, ok := <-ch
+		if !ok {
+			return logDoneMsg{}
+		}
+		return logLineMsg{line: line}
+	}
+}
+
+// spinnerTick returns a command that triggers spinner animation after 80ms.
+func spinnerTick() tea.Cmd {
+	return tea.Tick(80*time.Millisecond, func(t time.Time) tea.Msg {
+		return spinnerTickMsg{}
+	})
 }
 
 // hasTaskOutput returns true if any task has output to display.
@@ -171,4 +1004,76 @@ func (m Model) hasTaskOutput() bool {
 		}
 	}
 	return false
+}
+
+// createOutputViewport creates a viewport populated with task output.
+func (m Model) createOutputViewport() viewport.Model {
+	// Build output content
+	var content strings.Builder
+	tasks := m.exec.Tasks()
+	for i, t := range tasks {
+		r := m.exec.ResultAt(i)
+		if r.Output != "" {
+			content.WriteString("\n")
+			content.WriteString(outputTaskStyle.Render(t.Name()))
+			content.WriteString("\n")
+			content.WriteString(outputContentStyle.Render(strings.TrimSpace(r.Output)))
+			content.WriteString("\n")
+		}
+	}
+
+	// Calculate viewport dimensions
+	width := m.width
+	if width == 0 {
+		width = 80 // Default width
+	}
+	height := min(outputViewHeight, m.height/2)
+	if height == 0 {
+		height = outputViewHeight
+	}
+
+	vp := viewport.New(width, height)
+	vp.SetContent(content.String())
+	return vp
+}
+
+// renderEmptyLogContent renders a richer display when the log panel is empty.
+// Shows task context and status-specific messages instead of just "(no output)".
+func (m Model) renderEmptyLogContent() string {
+	var s strings.Builder
+
+	// Get current or selected task
+	var taskIdx int
+	if m.exec.Stopped() {
+		taskIdx = m.selectedTask
+	} else {
+		taskIdx = m.exec.Current()
+	}
+
+	if taskIdx >= len(m.exec.Tasks()) {
+		return "Waiting for output..."
+	}
+
+	t := m.exec.Tasks()[taskIdx]
+	result := m.exec.ResultAt(taskIdx)
+
+	// Show task name
+	s.WriteString(lipgloss.NewStyle().Bold(true).Render(t.Name()))
+	s.WriteString("\n\n")
+
+	// Show status-specific message
+	switch result.Status {
+	case task.StatusPending:
+		s.WriteString(lipgloss.NewStyle().Faint(true).Render("Waiting for output..."))
+	case task.StatusSkipped:
+		s.WriteString(lipgloss.NewStyle().Faint(true).Render("Task was skipped"))
+		if result.Message != "" {
+			s.WriteString("\n")
+			s.WriteString(lipgloss.NewStyle().Faint(true).Render(result.Message))
+		}
+	default:
+		s.WriteString(lipgloss.NewStyle().Faint(true).Render("No output captured"))
+	}
+
+	return s.String()
 }

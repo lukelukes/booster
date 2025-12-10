@@ -11,9 +11,10 @@ import (
 
 // mockTask is a test double for Task interface.
 type mockTask struct {
-	result Result
-	name   string
-	called bool
+	result    Result
+	name      string
+	called    bool
+	needsSudo bool
 }
 
 func (m *mockTask) Name() string { return m.name }
@@ -21,6 +22,7 @@ func (m *mockTask) Run(ctx context.Context) Result {
 	m.called = true
 	return m.result
 }
+func (m *mockTask) NeedsSudo() bool { return m.needsSudo }
 
 func TestConditionalTask_SkipsWhenConditionNotMet(t *testing.T) {
 	inner := &mockTask{

@@ -17,6 +17,11 @@ func (t *DirCreate) Name() string {
 	return "create " + t.Path
 }
 
+// NeedsSudo returns false - directory creation in user space doesn't need sudo.
+func (t *DirCreate) NeedsSudo() bool {
+	return false
+}
+
 func (t *DirCreate) Run(ctx context.Context) Result {
 	expanded := pathutil.Expand(t.Path)
 

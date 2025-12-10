@@ -5,8 +5,33 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 )
+
+// knownBrewPaths are the standard Homebrew installation paths.
+// We check these directly instead of relying on PATH, which may be stale
+// if Homebrew was installed during the current session.
+var knownBrewPaths = []string{
+	"/opt/homebrew/bin/brew",              // Apple Silicon Macs
+	"/usr/local/bin/brew",                 // Intel Macs
+	"/home/linuxbrew/.linuxbrew/bin/brew", // Linux default
+}
+
+// BrewPathFinder is a function that finds the brew binary path.
+// The default implementation checks well-known filesystem locations.
+// This can be overridden for testing.
+type BrewPathFinder func() (path string, found bool)
+
+// defaultBrewPathFinder checks well-known filesystem locations for brew.
+func defaultBrewPathFinder() (string, bool) {
+	for _, path := range knownBrewPaths {
+		if _, err := os.Stat(path); err == nil {
+			return path, true
+		}
+	}
+	return "", false
+}
 
 // PackageManager abstracts over different system package managers.
 type PackageManager interface {
@@ -98,15 +123,34 @@ func (m *PacmanManager) SupportsCasks() bool {
 
 // HomebrewManager implements PackageManager for macOS using Homebrew.
 type HomebrewManager struct {
-	Runner cmdexec.Runner
+	Runner     cmdexec.Runner
+	PathFinder BrewPathFinder
 }
 
-// NewHomebrewManager creates a new HomebrewManager with the given runner.
-func NewHomebrewManager(runner cmdexec.Runner) *HomebrewManager {
+// NewHomebrewManager creates a new HomebrewManager with the given runner and optional PathFinder.
+// If pathFinder is nil, the default implementation will be used.
+func NewHomebrewManager(runner cmdexec.Runner, pathFinder BrewPathFinder) *HomebrewManager {
 	if runner == nil {
 		runner = cmdexec.DefaultRunner()
 	}
-	return &HomebrewManager{Runner: runner}
+	return &HomebrewManager{
+		Runner:     runner,
+		PathFinder: pathFinder,
+	}
+}
+
+// brewPath returns the path to the brew binary.
+// Checks well-known locations directly to handle fresh installs in the same session,
+// falling back to "brew" (PATH lookup) if not found.
+func (m *HomebrewManager) brewPath() string {
+	finder := m.PathFinder
+	if finder == nil {
+		finder = defaultBrewPathFinder
+	}
+	if path, found := finder(); found {
+		return path
+	}
+	return "brew"
 }
 
 func (m *HomebrewManager) Name() string {
@@ -114,7 +158,7 @@ func (m *HomebrewManager) Name() string {
 }
 
 func (m *HomebrewManager) ListInstalled(ctx context.Context) ([]string, error) {
-	output, err := m.Runner.Run(ctx, "brew", "list", "--formulae")
+	output, err := m.Runner.Run(ctx, m.brewPath(), "list", "--formulae")
 	if err != nil {
 		return nil, fmt.Errorf("list installed packages: %w", err)
 	}
@@ -127,7 +171,7 @@ func (m *HomebrewManager) Install(ctx context.Context, pkgs []string) (string, e
 	}
 
 	args := append([]string{"install"}, pkgs...)
-	output, err := m.Runner.Run(ctx, "brew", args...)
+	output, err := m.Runner.Run(ctx, m.brewPath(), args...)
 	if err != nil {
 		return string(output), fmt.Errorf("brew install: %w", err)
 	}
@@ -135,7 +179,7 @@ func (m *HomebrewManager) Install(ctx context.Context, pkgs []string) (string, e
 }
 
 func (m *HomebrewManager) ListInstalledCasks(ctx context.Context) ([]string, error) {
-	output, err := m.Runner.Run(ctx, "brew", "list", "--casks")
+	output, err := m.Runner.Run(ctx, m.brewPath(), "list", "--casks")
 	if err != nil {
 		return nil, fmt.Errorf("list installed casks: %w", err)
 	}
@@ -148,7 +192,7 @@ func (m *HomebrewManager) InstallCasks(ctx context.Context, casks []string) (str
 	}
 
 	args := append([]string{"install", "--cask"}, casks...)
-	output, err := m.Runner.Run(ctx, "brew", args...)
+	output, err := m.Runner.Run(ctx, m.brewPath(), args...)
 	if err != nil {
 		return string(output), fmt.Errorf("brew install casks: %w", err)
 	}
@@ -211,6 +255,12 @@ func (t *PkgInstall) Name() string {
 	return "install packages: " + strings.Join(parts, " + ")
 }
 
+// NeedsSudo returns true on Linux (paru/pacman need sudo), false on macOS (brew doesn't).
+// paru handles sudo internally but needs credentials cached before the TUI starts.
+func (t *PkgInstall) NeedsSudo() bool {
+	return t.OS != "darwin"
+}
+
 // Run executes the package installation. It is idempotent.
 // Uses batch checking for efficiency: O(2) shell calls instead of O(n).
 func (t *PkgInstall) Run(ctx context.Context) Result {
@@ -223,13 +273,17 @@ func (t *PkgInstall) Run(ctx context.Context) Result {
 		}
 	}
 
+	// Use clean context for queries (no log streaming) - we only want to
+	// stream the actual install output, not the package list queries
+	queryCtx := context.Background()
+
 	// Determine what needs to be installed
-	toInstall, err := t.findMissingPackages(ctx)
+	toInstall, err := t.findMissingPackages(queryCtx)
 	if err != nil {
 		return Result{Status: StatusFailed, Error: err}
 	}
 
-	casksToInstall, err := t.findMissingCasks(ctx)
+	casksToInstall, err := t.findMissingCasks(queryCtx)
 	if err != nil {
 		return Result{Status: StatusFailed, Error: err}
 	}
@@ -239,7 +293,7 @@ func (t *PkgInstall) Run(ctx context.Context) Result {
 		return Result{Status: StatusSkipped, Message: "all packages already installed"}
 	}
 
-	// Install packages and casks
+	// Install packages and casks (use original ctx with log streaming)
 	return t.performInstallation(ctx, toInstall, casksToInstall)
 }
 
@@ -293,6 +347,14 @@ func (t *PkgInstall) findMissingCasks(ctx context.Context) ([]string, error) {
 	return toInstall, nil
 }
 
+// installStats holds counts for generating result messages.
+type installStats struct {
+	totalPkgs      int
+	installedPkgs  int
+	totalCasks     int
+	installedCasks int
+}
+
 // performInstallation installs the specified packages and casks.
 func (t *PkgInstall) performInstallation(ctx context.Context, packages, casks []string) Result {
 	var allOutput strings.Builder
@@ -322,21 +384,46 @@ func (t *PkgInstall) performInstallation(ctx context.Context, packages, casks []
 		}
 	}
 
-	// Build result message
-	msg := t.buildResultMessage(packages, casks)
+	// Build result message with full stats
+	stats := installStats{
+		totalPkgs:      len(t.Packages),
+		installedPkgs:  len(packages),
+		totalCasks:     len(t.Casks),
+		installedCasks: len(casks),
+	}
+	msg := t.buildResultMessage(stats)
 	return Result{Status: StatusDone, Message: msg, Output: allOutput.String()}
 }
 
 // buildResultMessage constructs a human-readable message about what was installed.
-func (t *PkgInstall) buildResultMessage(packages, casks []string) string {
-	var msg []string
-	if len(packages) > 0 {
-		msg = append(msg, fmt.Sprintf("installed %d packages", len(packages)))
+func (t *PkgInstall) buildResultMessage(stats installStats) string {
+	var parts []string
+
+	if stats.totalPkgs > 0 {
+		skipped := stats.totalPkgs - stats.installedPkgs
+		parts = append(parts, formatInstallStats("pkg", skipped, stats.installedPkgs))
 	}
-	if len(casks) > 0 {
-		msg = append(msg, fmt.Sprintf("installed %d casks", len(casks)))
+	if stats.totalCasks > 0 {
+		skipped := stats.totalCasks - stats.installedCasks
+		parts = append(parts, formatInstallStats("cask", skipped, stats.installedCasks))
 	}
-	return strings.Join(msg, ", ")
+
+	return strings.Join(parts, " | ")
+}
+
+// formatInstallStats formats a single category's install statistics.
+func formatInstallStats(category string, skipped, installed int) string {
+	plural := "s"
+	if skipped == 1 && installed == 0 {
+		plural = ""
+	}
+	if skipped > 0 && installed > 0 {
+		return fmt.Sprintf("%d %s%s (%d existed, %d installed)", skipped+installed, category, plural, skipped, installed)
+	}
+	if skipped > 0 {
+		return fmt.Sprintf("%d %s%s (all existed)", skipped, category, plural)
+	}
+	return fmt.Sprintf("%d %s%s installed", installed, category, plural)
 }
 
 // PkgInstallConfig holds the factory configuration.
@@ -377,7 +464,7 @@ func NewPkgInstallFactory(cfg PkgInstallConfig) Factory {
 		manager := cfg.Manager
 		if manager == nil {
 			if cfg.OS == "darwin" {
-				manager = NewHomebrewManager(cfg.Runner)
+				manager = NewHomebrewManager(cfg.Runner, nil)
 			} else {
 				manager = NewPacmanManager(cfg.Runner)
 			}

@@ -33,6 +33,11 @@ type DarwinDefaults struct {
 	Entries []DefaultsEntry
 }
 
+// NeedsSudo returns false - git config operates on user config files.
+func (t *DarwinDefaults) NeedsSudo() bool {
+	return false
+}
+
 // Name returns a human-readable description for display.
 func (t *DarwinDefaults) Name() string {
 	if len(t.Entries) == 0 {

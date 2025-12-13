@@ -110,14 +110,40 @@ type spinnerTickMsg struct{}
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.MouseMsg:
-		// Handle mouse wheel scrolling for logs panel (works without focus)
+		// Handle mouse interactions in two-column mode
 		if m.isTwoColumn() && m.showLogs {
+			// Calculate layout to determine panel boundaries
+			contentWidth, contentHeight := m.contentDimensions()
+			layout := NewLayout(contentWidth, contentHeight)
+
+			// Account for app container border (2 chars on left)
+			clickX := msg.X - 2
+
 			switch msg.Button {
-			case tea.MouseButtonWheelUp:
-				m.logViewport.ScrollUp(3)
+			case tea.MouseButtonLeft:
+				// Focus panel based on click position
+				if clickX < layout.LeftWidth {
+					m.focusedPanel = FocusTaskList
+				} else {
+					m.focusedPanel = FocusLogs
+				}
 				return m, nil
+
+			case tea.MouseButtonWheelUp:
+				// Scroll the panel under the mouse cursor
+				if clickX < layout.LeftWidth {
+					m.taskViewport.ScrollUp(3)
+				} else {
+					m.logViewport.ScrollUp(3)
+				}
+				return m, nil
+
 			case tea.MouseButtonWheelDown:
-				m.logViewport.ScrollUp(3)
+				if clickX < layout.LeftWidth {
+					m.taskViewport.ScrollDown(3)
+				} else {
+					m.logViewport.ScrollDown(3)
+				}
 				return m, nil
 			}
 		}
@@ -848,15 +874,8 @@ func (m *Model) initLogViewportForHistory() {
 		taskViewportHeight,
 	)
 
-	// Set initial content to first task with logs, or selected task
-	m.selectedTask = 0
-	// Find first task with logs
-	for i := 0; i < m.exec.Total(); i++ {
-		if logs, ok := m.logHistory[i]; ok && len(logs) > 0 {
-			m.selectedTask = i
-			break
-		}
-	}
+	// Keep selectedTask at current position (last completed or failed task)
+	// This preserves focus on the task that just finished
 	m.updateLogViewportForSelectedTask()
 	m.ensureTaskVisible()
 }
@@ -952,6 +971,7 @@ func (m Model) completeTask(result task.Result) (Model, tea.Cmd) {
 	// Auto-advance selected task (if not at last task)
 	if m.selectedTask < m.exec.Total()-1 {
 		m.selectedTask++
+		m.ensureTaskVisible()
 	}
 
 	// Trigger next task via message for proper state handling

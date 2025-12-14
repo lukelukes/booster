@@ -244,6 +244,14 @@ func TestTemplateRender_MissingVariable(t *testing.T) {
 }
 
 func TestNewTemplateRenderFactory_ValidArgs(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "src.tmpl")
+	target := filepath.Join(dir, "dst")
+
+	// Create a template that uses all context fields to verify they're passed correctly
+	tmplContent := "Name={{.Vars.Name}} OS={{.System.OS}} Profile={{.System.Profile}}"
+	require.NoError(t, os.WriteFile(source, []byte(tmplContent), 0o644))
+
 	cfg := TemplateRenderConfig{
 		Vars:    map[string]string{"Name": "Test"},
 		OS:      "arch",
@@ -253,8 +261,8 @@ func TestNewTemplateRenderFactory_ValidArgs(t *testing.T) {
 
 	args := []any{
 		map[string]any{
-			"source": "src.tmpl",
-			"target": "dst",
+			"source": source,
+			"target": target,
 		},
 	}
 
@@ -262,13 +270,18 @@ func TestNewTemplateRenderFactory_ValidArgs(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 
-	tmplTask, ok := tasks[0].(*TemplateRender)
-	require.True(t, ok)
-	assert.Equal(t, "src.tmpl", tmplTask.Source)
-	assert.Equal(t, "dst", tmplTask.Target)
-	assert.Equal(t, cfg.Vars, tmplTask.Context.Vars)
-	assert.Equal(t, "arch", tmplTask.Context.System.OS)
-	assert.Equal(t, "work", tmplTask.Context.System.Profile)
+	// Test through Name() - verifies source/target were parsed correctly
+	name := tasks[0].Name()
+	assert.Contains(t, name, "src.tmpl")
+	assert.Contains(t, name, "dst")
+
+	// Test through Run() - verifies context (Vars, OS, Profile) is correctly applied
+	result := tasks[0].Run(context.Background())
+	require.Equal(t, StatusDone, result.Status)
+
+	content, err := os.ReadFile(target)
+	require.NoError(t, err)
+	assert.Equal(t, "Name=Test OS=arch Profile=work", string(content))
 }
 
 func TestNewTemplateRenderFactory_MultipleTemplates(t *testing.T) {

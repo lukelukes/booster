@@ -58,63 +58,46 @@ func RenderProgressWithOptions(current, total int, elapsed time.Duration, width 
 		current = 0
 	}
 
-	// Calculate percentage
 	percentage := float64(current) / float64(total) * 100
-
-	// Format elapsed time
 	elapsedStr := formatElapsedCompact(elapsed)
 
-	// Build stats line with human-readable format
 	var statsLine string
 	isComplete := current == total
 
 	if isComplete {
-		// Format: "10 of 10 tasks  •  Complete  •  2m34s"
 		statsLine = fmt.Sprintf("%d of %d tasks  •  Complete  •  %s", current, total, elapsedStr)
 	} else {
-		// Start with: "3 of 12 tasks"
 		parts := []string{fmt.Sprintf("%d of %d tasks", current, total)}
 
-		// Add running task name if provided
 		if opts.RunningTaskName != "" {
 			parts = append(parts, opts.RunningTaskName)
 		}
 
-		// Add ETA if average task duration is provided
 		if opts.AvgTaskDuration > 0 {
 			remaining := total - current
 			eta := time.Duration(remaining) * opts.AvgTaskDuration
 			etaStr := formatElapsedCompact(eta)
 			parts = append(parts, fmt.Sprintf("~%s remaining", etaStr))
 		} else {
-			// Add percentage if no ETA
 			parts = append(parts, fmt.Sprintf("%d%%", int(percentage)))
 		}
 
-		// Add elapsed time
 		parts = append(parts, elapsedStr)
-
-		// Join with bullet separator
 		statsLine = strings.Join(parts, "  •  ")
 	}
 
 	styledStats := progressTextStyle.Render(statsLine)
 
-	// Calculate bar width (use full width if provided, otherwise use stats line length)
 	barWidth := width
 	if barWidth <= 0 {
-		// If no width specified, make bar same length as stats text
 		barWidth = len(statsLine)
 	}
 
-	// Constrain bar width to 50% of terminal width
 	maxWidth := width / 2
 	if maxWidth > 0 && barWidth > maxWidth {
 		barWidth = maxWidth
 	}
 
-	// Build progress bar using rune count (not byte count)
-	// Each █ and ░ is one visual character even though multi-byte
 	filledCount := util.Clamp((current*barWidth)/total, 0, barWidth)
 
 	filled := strings.Repeat("█", filledCount)

@@ -47,15 +47,12 @@ type TaskTiming struct {
 func RenderSummary(data SummaryData, width int) string {
 	var b strings.Builder
 
-	// Render header box
 	b.WriteString(renderHeaderBox("✓ BOOSTER COMPLETE", data.Elapsed, width, summarySuccessStyle))
 	b.WriteString("\n\n")
 
-	// Render statistics section
 	b.WriteString(renderStatistics(data))
 	b.WriteString("\n")
 
-	// Render slowest tasks section if any
 	if len(data.SlowestTasks) > 0 {
 		b.WriteString("\n")
 		b.WriteString(renderSlowestTasks(data.SlowestTasks))
@@ -68,15 +65,12 @@ func RenderSummary(data SummaryData, width int) string {
 func RenderFailedSummary(data SummaryData, width int) string {
 	var b strings.Builder
 
-	// Render header box with failure style
 	b.WriteString(renderHeaderBox("✗ BOOSTER FAILED", data.Elapsed, width, summaryFailureStyle))
 	b.WriteString("\n\n")
 
-	// Render statistics section
 	b.WriteString(renderStatistics(data))
 	b.WriteString("\n")
 
-	// Render slowest tasks section if any
 	if len(data.SlowestTasks) > 0 {
 		b.WriteString("\n")
 		b.WriteString(renderSlowestTasks(data.SlowestTasks))
@@ -85,14 +79,11 @@ func RenderFailedSummary(data SummaryData, width int) string {
 	return b.String()
 }
 
-// renderHeaderBox renders the header box with title and elapsed time.
 func renderHeaderBox(title string, elapsed time.Duration, width int, style lipgloss.Style) string {
-	// Calculate box width - use provided width or default
 	boxWidth := width
 	if boxWidth <= 0 {
 		boxWidth = 60
 	}
-	// Constrain to reasonable bounds
 	if boxWidth > 80 {
 		boxWidth = 80
 	}
@@ -100,16 +91,10 @@ func renderHeaderBox(title string, elapsed time.Duration, width int, style lipgl
 		boxWidth = 40
 	}
 
-	// Format elapsed time
 	elapsedStr := formatDuration(elapsed)
 	subtitle := elapsedStr + " total"
 
-	// Build content lines
-	titleLine := title
-	subtitleLine := subtitle
-
-	// Apply style and box
-	content := fmt.Sprintf("%s\n%s", titleLine, subtitleLine)
+	content := fmt.Sprintf("%s\n%s", title, subtitle)
 
 	return style.
 		Width(boxWidth - 4). // Account for border and padding
@@ -117,27 +102,23 @@ func renderHeaderBox(title string, elapsed time.Duration, width int, style lipgl
 		Render(content)
 }
 
-// renderStatistics renders the statistics section with progress bars.
 func renderStatistics(data SummaryData) string {
 	var b strings.Builder
 
-	// Section title
 	b.WriteString(summaryStatStyle.Render("  Summary"))
 	b.WriteString("\n")
 	b.WriteString(summaryStatStyle.Render("  " + strings.Repeat("─", 41)))
 	b.WriteString("\n")
 
-	// Calculate percentages
 	total := data.Total
 	if total == 0 {
-		total = 1 // Avoid division by zero
+		total = 1
 	}
 
 	donePercent := float64(data.Done) / float64(total) * 100
 	skippedPercent := float64(data.Skipped) / float64(total) * 100
 	failedPercent := float64(data.Failed) / float64(total) * 100
 
-	// Render each stat line
 	b.WriteString(renderStatLine(data.Done, "completed", donePercent, doneStyle))
 	b.WriteString("\n")
 	b.WriteString(renderStatLine(data.Skipped, "skipped", skippedPercent, skippedStyle))
@@ -147,18 +128,12 @@ func renderStatistics(data SummaryData) string {
 	return b.String()
 }
 
-// renderStatLine renders a single statistics line with mini progress bar.
 func renderStatLine(count int, label string, percent float64, style lipgloss.Style) string {
-	// Format: "     12 completed    ████████████████████  80%"
 	const barWidth = 20
 
-	// Build the bar
 	bar := renderMiniBar(percent, barWidth)
-
-	// Format the line with right alignment for count
 	countStr := fmt.Sprintf("%2d", count)
 	percentStr := fmt.Sprintf("%3.0f%%", percent)
-	// Pad label to 9 characters (length of "completed") for alignment
 	labelPadded := fmt.Sprintf("%-9s", label)
 
 	return fmt.Sprintf("     %s %s    %s  %s",
@@ -168,29 +143,24 @@ func renderStatLine(count int, label string, percent float64, style lipgloss.Sty
 		summaryStatStyle.Render(percentStr))
 }
 
-// renderMiniBar renders a mini progress bar.
 func renderMiniBar(percent float64, width int) string {
 	filled := util.Clamp(int(math.Round(percent/100*float64(width))), 0, width)
 	empty := width - filled
 
-	// Use block characters for filled portion and empty blocks for remainder
 	filledBar := summaryBarStyle.Render(strings.Repeat("█", filled))
 	emptyBar := summaryBarEmptyStyle.Render(strings.Repeat("░", empty))
 
 	return filledBar + emptyBar
 }
 
-// renderSlowestTasks renders the slowest tasks section.
 func renderSlowestTasks(tasks []TaskTiming) string {
 	var b strings.Builder
 
-	// Section title
 	b.WriteString(summaryStatStyle.Render("  Slowest Tasks"))
 	b.WriteString("\n")
 	b.WriteString(summaryStatStyle.Render("  " + strings.Repeat("─", 41)))
 	b.WriteString("\n")
 
-	// Limit to top 3
 	limit := min(len(tasks), 3)
 
 	for i := range limit {

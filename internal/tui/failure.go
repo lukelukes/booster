@@ -39,20 +39,16 @@ func RenderFailure(info FailureInfo, width int) string {
 
 	var content strings.Builder
 
-	// Header with task name
 	header := failureHeaderStyle.Render("FAILED")
 	content.WriteString(header)
 	content.WriteString("\n")
 
-	// Task name with error icon
 	taskLine := "✗ " + info.TaskName
 	content.WriteString(failureTaskStyle.Render(truncateLine(taskLine, innerWidth)))
 	content.WriteString("\n\n")
 
-	// Error message
 	if info.Error != nil {
 		errMsg := "Error: " + info.Error.Error()
-		// Wrap error message if it's too long
 		wrappedErr := wrapText(errMsg, innerWidth)
 		for _, line := range wrappedErr {
 			content.WriteString(failureErrorStyle.Render(line))
@@ -61,12 +57,10 @@ func RenderFailure(info FailureInfo, width int) string {
 		content.WriteString("\n")
 	}
 
-	// Output section (if present)
 	if info.Output != "" {
 		content.WriteString(failureOutputHeaderStyle.Render("─── Last output ───"))
 		content.WriteString("\n")
 
-		// Get last N lines of output
 		outputLines := getLastLines(info.Output, maxOutputLines)
 		for _, line := range outputLines {
 			truncated := truncateLine(line, innerWidth)
@@ -75,7 +69,6 @@ func RenderFailure(info FailureInfo, width int) string {
 		}
 	}
 
-	// Wrap content in a bordered box
 	boxContent := content.String()
 	boxStyle := failureBoxStyle.Width(innerWidth)
 
@@ -133,7 +126,6 @@ func getLastLines(text string, n int) []string {
 	// Split by newlines and filter out empty trailing lines
 	allLines := strings.Split(strings.TrimSpace(text), "\n")
 
-	// Return last N lines
 	if len(allLines) <= n {
 		return allLines
 	}
@@ -155,15 +147,12 @@ func RenderFailureSummary(failures []FailureInfo, width int) string {
 	content.WriteString("\n\n")
 
 	for i, failure := range failures {
-		// Task name with error icon
 		taskLine := "✗ " + failure.TaskName
 		content.WriteString(failureTaskStyle.Render(taskLine))
 		content.WriteString("\n")
 
-		// Brief error message (first line only)
 		if failure.Error != nil {
 			errMsg := failure.Error.Error()
-			// Take only first line if multi-line error
 			if idx := strings.Index(errMsg, "\n"); idx > 0 {
 				errMsg = errMsg[:idx]
 			}
@@ -173,7 +162,6 @@ func RenderFailureSummary(failures []FailureInfo, width int) string {
 			content.WriteString("\n")
 		}
 
-		// Add spacing between failures
 		if i < len(failures)-1 {
 			content.WriteString("\n")
 		}

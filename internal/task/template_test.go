@@ -247,8 +247,6 @@ func TestNewTemplateRenderFactory_ValidArgs(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "src.tmpl")
 	target := filepath.Join(dir, "dst")
-
-	// Create a template that uses all context fields to verify they're passed correctly
 	tmplContent := "Name={{.Vars.Name}} OS={{.System.OS}} Profile={{.System.Profile}}"
 	require.NoError(t, os.WriteFile(source, []byte(tmplContent), 0o644))
 
@@ -270,12 +268,10 @@ func TestNewTemplateRenderFactory_ValidArgs(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 
-	// Test through Name() - verifies source/target were parsed correctly
 	name := tasks[0].Name()
 	assert.Contains(t, name, "src.tmpl")
 	assert.Contains(t, name, "dst")
 
-	// Test through Run() - verifies context (Vars, OS, Profile) is correctly applied
 	result := tasks[0].Run(context.Background())
 	require.Equal(t, StatusDone, result.Status)
 

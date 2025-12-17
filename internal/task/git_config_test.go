@@ -454,7 +454,6 @@ func TestNewGitConfig(t *testing.T) {
 			wantErr:       false,
 			wantTaskCount: 1,
 			checkTask: func(t *testing.T, task Task) {
-				// Test through Name() - verifies keys were parsed correctly
 				name := task.Name()
 				assert.Contains(t, name, "user.name")
 				assert.Contains(t, name, "user.email")
@@ -508,7 +507,6 @@ func TestNewGitConfig(t *testing.T) {
 			wantErr:       false,
 			wantTaskCount: 1,
 			checkTask: func(t *testing.T, task Task) {
-				// Test through Name() - verifies key was parsed correctly
 				name := task.Name()
 				assert.Contains(t, name, "user.name")
 			},

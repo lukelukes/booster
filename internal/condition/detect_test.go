@@ -156,7 +156,7 @@ func TestSystemDetector_Detect_OnDarwin(t *testing.T) {
 	d := &SystemDetector{
 		ReadFile: func(path string) ([]byte, error) {
 			readFileCalled = true
-			// Even if we provide Linux content, darwin should return "darwin"
+
 			return []byte("ID=ubuntu\n"), nil
 		},
 	}
@@ -167,17 +167,12 @@ func TestSystemDetector_Detect_OnDarwin(t *testing.T) {
 }
 
 func TestSystemDetector_Detect_DefaultBehavior(t *testing.T) {
-	// Test with no ReadFile injection - should use os.ReadFile
 	d := &SystemDetector{}
 	ctx := d.Detect()
 
-	// Should return something non-empty
 	assert.NotEmpty(t, ctx.OS)
 
-	// On darwin, should always return "darwin"
 	if runtime.GOOS == "darwin" {
 		assert.Equal(t, "darwin", ctx.OS)
 	}
-	// On Linux, it should return a distro ID or fallback to "linux"
-	// We can't assert exact value as it depends on the actual system
 }

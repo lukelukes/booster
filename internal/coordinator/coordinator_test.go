@@ -157,18 +157,13 @@ func TestCoordinator_StartTask_ResetsState(t *testing.T) {
 	assert.Len(t, c.LogsFor(0), 1)
 }
 
-// TestCoordinator_LogsFor_ReturnsNilForUnknownTask verifies LogsFor returns
-// nil for tasks that haven't been executed.
 func TestCoordinator_LogsFor_ReturnsNilForUnknownTask(t *testing.T) {
 	c := New()
 
-	// No tasks started yet
 	assert.Nil(t, c.LogsFor(0))
 	assert.Nil(t, c.LogsFor(999))
 }
 
-// TestCoordinator_TaskCompleteMsg_ContainsLogs verifies the completion message
-// includes the captured logs.
 func TestCoordinator_TaskCompleteMsg_ContainsLogs(t *testing.T) {
 	c := New()
 	c.StartTask(0)
@@ -184,19 +179,15 @@ func TestCoordinator_TaskCompleteMsg_ContainsLogs(t *testing.T) {
 	assert.Equal(t, "log2", msg.Logs[1])
 }
 
-// TestCoordinator_MultipleTaskDoneCalls_OnlyFirstCounts verifies that calling
-// TaskDone multiple times doesn't cause issues.
 func TestCoordinator_DoubleCompletion_Handled(t *testing.T) {
 	c := New()
 	c.StartTask(0)
 	c.AddLogLine("log")
 	c.LogsDone()
 
-	// First TaskDone should complete
 	msg1 := c.TaskDone(task.Result{Status: task.StatusDone})
 	require.NotNil(t, msg1)
 
-	// Second TaskDone should return nil (already completed)
 	msg2 := c.TaskDone(task.Result{Status: task.StatusFailed})
 	assert.Nil(t, msg2, "Second TaskDone should return nil")
 }

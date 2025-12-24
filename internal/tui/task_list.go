@@ -10,8 +10,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// TaskListModel manages the task list display and navigation.
-// Follows the model tree pattern as a child of the main Model.
 type TaskListModel struct {
 	exec     *executor.Executor
 	viewport viewport.Model
@@ -21,7 +19,6 @@ type TaskListModel struct {
 	height   int
 }
 
-// NewTaskList creates a new task list model.
 func NewTaskList(exec *executor.Executor) TaskListModel {
 	return TaskListModel{
 		exec:     exec,
@@ -30,10 +27,7 @@ func NewTaskList(exec *executor.Executor) TaskListModel {
 	}
 }
 
-// Update handles messages for the task list.
-// Returns the updated model and any commands to execute.
 func (t TaskListModel) Update(msg tea.Msg) (TaskListModel, tea.Cmd) {
-	// Update spinner on tick
 	t.spinner = t.spinner.Update(msg)
 
 	switch msg := msg.(type) {
@@ -55,19 +49,16 @@ func (t TaskListModel) Update(msg tea.Msg) (TaskListModel, tea.Cmd) {
 	return t, nil
 }
 
-// SetSize updates the viewport dimensions.
 func (t *TaskListModel) SetSize(width, height int) {
 	t.width = width
 	t.height = height
 	t.viewport = viewport.New(width, height)
 }
 
-// Selected returns the currently selected task index.
 func (t TaskListModel) Selected() int {
 	return t.selected
 }
 
-// SetSelected sets the selected task index.
 func (t *TaskListModel) SetSelected(idx int) {
 	if idx >= 0 && idx < t.exec.Total() {
 		t.selected = idx
@@ -75,7 +66,6 @@ func (t *TaskListModel) SetSelected(idx int) {
 	}
 }
 
-// ensureVisible scrolls the viewport to keep the selected task visible.
 func (t *TaskListModel) ensureVisible() {
 	if t.viewport.Height == 0 {
 		return
@@ -92,14 +82,12 @@ func (t *TaskListModel) ensureVisible() {
 	}
 }
 
-// View renders the task list.
 func (t TaskListModel) View() string {
 	content := t.renderTaskLines()
 	t.viewport.SetContent(content)
 	return t.viewport.View()
 }
 
-// renderTaskLines renders all task lines for the viewport content.
 func (t TaskListModel) renderTaskLines() string {
 	var s strings.Builder
 
@@ -112,7 +100,6 @@ func (t TaskListModel) renderTaskLines() string {
 		result := t.exec.ResultAt(i)
 		isSelected := i == t.selected
 
-		// Selection indicator prefix
 		prefix := "○ "
 		if isSelected {
 			prefix = "▶ "
@@ -135,14 +122,11 @@ func (t TaskListModel) renderTaskLines() string {
 				line = failedStyle.Render(prefix + "✗ " + tsk.Name())
 			}
 		} else if i == current && !stopped {
-			// Currently running with animated spinner
 			line = runningStyle.Render(prefix + "→ " + tsk.Name() + " " + t.spinner.View())
 		} else {
-			// Pending
 			line = pendingStyle.Render(prefix + "  " + tsk.Name())
 		}
 
-		// Apply selection highlight
 		if isSelected {
 			lineWidth := lipgloss.Width(line)
 			if lineWidth < t.width {
@@ -160,7 +144,6 @@ func (t TaskListModel) renderTaskLines() string {
 	return s.String()
 }
 
-// SpinnerTick returns the spinner's tick command.
 func (t TaskListModel) SpinnerTick() tea.Cmd {
 	return t.spinner.Tick()
 }

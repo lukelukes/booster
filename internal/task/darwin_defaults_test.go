@@ -694,18 +694,14 @@ func TestDarwinDefaults_NormalizeValue_BoolStringEdgeCases(t *testing.T) {
 	assert.Equal(t, "1", task.normalizeValue("bool", "true"))
 	assert.Equal(t, "1", task.normalizeValue("bool", "1"))
 
-	// Other strings should pass through as-is (lowercased)
 	assert.Equal(t, "other", task.normalizeValue("bool", "other"))
 	assert.Equal(t, "yes", task.normalizeValue("bool", "yes"))
 }
 
 func TestDarwinDefaults_MessageWhenNoAlreadySet(t *testing.T) {
-	// Tests boundary: alreadySet > 0 vs >= 0
-	// When changed > 0 AND alreadySet == 0, message should NOT contain "already set"
 	runner := &cmdexec.MockRunner{
 		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			if name == "defaults" && args[0] == "read" {
-				// Key doesn't exist - return error
 				return nil, errors.New("not found")
 			}
 			return []byte("set ok"), nil
@@ -729,7 +725,6 @@ func TestDarwinDefaults_MessageWhenNoAlreadySet(t *testing.T) {
 }
 
 func TestDarwinDefaults_CapturesWriteOutput(t *testing.T) {
-	// Tests: if output != "" - verify non-empty write output is captured
 	runner := &cmdexec.MockRunner{
 		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			if name == "defaults" && args[0] == "read" {

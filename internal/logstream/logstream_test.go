@@ -43,7 +43,6 @@ func TestChannelWriter_PartialLine(t *testing.T) {
 	case line := <-ch:
 		t.Fatalf("expected no line, got: %s", line)
 	default:
-
 	}
 
 	_, err = w.Write([]byte(" complete\n"))

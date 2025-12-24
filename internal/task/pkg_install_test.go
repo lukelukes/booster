@@ -257,7 +257,6 @@ func TestPkgInstall_Name_BoundaryConditions(t *testing.T) {
 			name := task.Name()
 
 			if tt.expectInline {
-
 				if len(tt.packages) == 3 {
 					assert.Contains(t, name, "git")
 					assert.Contains(t, name, "curl")
@@ -269,7 +268,6 @@ func TestPkgInstall_Name_BoundaryConditions(t *testing.T) {
 					assert.NotContains(t, name, "3 casks")
 				}
 			} else {
-
 				if len(tt.packages) > 3 {
 					assert.Contains(t, name, "4 packages")
 				}

@@ -50,11 +50,9 @@ func NewLayout(width, height int) Layout {
 	var leftWidth, rightWidth int
 
 	if width >= wideTerminalWidth {
-
 		leftWidth = width * wideLeftPercent / 100
 		rightWidth = width - leftWidth
 	} else {
-
 		leftWidth = width * mediumLeftPercent / 100
 		rightWidth = width - leftWidth
 	}

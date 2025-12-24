@@ -70,7 +70,6 @@ func TestRenderPanel(t *testing.T) {
 				lines := strings.SplitSeq(result, "\n")
 
 				for line := range lines {
-
 					visibleWidth := lipgloss.Width(line)
 					assert.LessOrEqual(t, visibleWidth, 20, "line should not exceed panel width")
 				}

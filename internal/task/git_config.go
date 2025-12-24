@@ -52,12 +52,10 @@ func (t *GitConfig) Run(ctx context.Context) Result {
 	var allOutput strings.Builder
 
 	for _, item := range t.Items {
-
 		output, err := t.Runner.Run(ctx, "git", "config", "--global", "--get", item.Key)
 		existing := strings.TrimSpace(string(output))
 
 		if item.Value != "" {
-
 			if existing == item.Value {
 				skipped = append(skipped, item.Key)
 				continue

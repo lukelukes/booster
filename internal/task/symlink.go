@@ -39,9 +39,7 @@ func (t *SymlinkCreate) Run(ctx context.Context) Result {
 
 	info, err := os.Lstat(target)
 	if err == nil {
-
 		if info.Mode()&os.ModeSymlink != 0 {
-
 			linkDest, err := os.Readlink(target)
 			if err != nil {
 				return Result{Status: StatusFailed, Error: err}

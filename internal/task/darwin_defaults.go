@@ -59,7 +59,6 @@ func (t *DarwinDefaults) Run(ctx context.Context) Result {
 	var allOutput strings.Builder
 
 	for _, entry := range t.Entries {
-
 		current, err := t.readDefault(ctx, entry.Domain, entry.Key)
 		if err != nil {
 			current = ""

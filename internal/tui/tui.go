@@ -91,7 +91,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 
 		if m.isTwoColumn() && m.showLogs {
-
 			contentWidth, contentHeight := m.contentDimensions()
 			layout := NewLayout(contentWidth, contentHeight)
 
@@ -146,7 +145,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case "j", "down":
 				if m.focusedPanel == FocusTaskList {
-
 					if m.selectedTask < m.exec.Total()-1 {
 						m.selectedTask++
 						m.ensureTaskVisible()
@@ -162,7 +160,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case "k", "up":
 				if m.focusedPanel == FocusTaskList {
-
 					if m.selectedTask > 0 {
 						m.selectedTask--
 						m.ensureTaskVisible()
@@ -260,7 +257,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.coord.AddLogLine(msg.line)
 
 		if m.isTwoColumnRunning() {
-
 			wasAtBottom := m.logViewport.AtBottom()
 			m.logViewport.SetContent(strings.Join(m.coord.CurrentLogs(), "\n"))
 			if wasAtBottom {

@@ -134,7 +134,6 @@ func TestRenderFailure(t *testing.T) {
 
 			lines := strings.SplitSeq(output, "\n")
 			for line := range lines {
-
 				stripped := stripAnsiSimple(line)
 
 				assert.LessOrEqual(t, len(stripped), tt.width*3,

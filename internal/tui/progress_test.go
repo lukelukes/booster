@@ -488,7 +488,6 @@ func stripANSI(s string) string {
 			continue
 		}
 		if inEscape {
-
 			if (s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= 'a' && s[i] <= 'z') {
 				inEscape = false
 			}

@@ -2,6 +2,7 @@
 package tui
 
 import (
+	"booster/internal/coordinator"
 	"booster/internal/executor"
 	"booster/internal/logstream"
 	"booster/internal/task"
@@ -33,7 +34,9 @@ const (
 
 // Model is the Bubble Tea model for the TUI.
 type Model struct {
-	exec       *executor.Executor
+	exec  *executor.Executor
+	coord *coordinator.Coordinator // Handles log/task coordination
+
 	showOutput bool // Toggle to show command output
 	showLogs   bool // Toggle to show logs panel (default: true)
 	width      int  // Terminal width (tracked for resize handling)
@@ -48,17 +51,11 @@ type Model struct {
 	// Scrollable task list viewport for two-column mode
 	taskViewport viewport.Model
 
-	// Streaming log support - log history per task
-	logHistory   map[int][]string         // task index -> log lines (persisted)
-	currentLogs  []string                 // accumulator for running task
+	// Streaming log channels (still needed for BubbleTea command system)
 	logCh        <-chan string            // Channel to receive log lines
 	logWriter    *logstream.ChannelWriter // Writer to close when task completes
 	selectedTask int                      // highlighted task index
 	focusedPanel FocusPanel               // which panel has focus (TaskList or Logs)
-
-	// Coordination state for log/task completion race condition fix
-	pendingResult *task.Result // holds task result if arrived before logs finished
-	logsDone      bool         // true when logDoneMsg received for current task
 
 	// Spinner animation state
 	spinnerFrame int // Current spinner animation frame (0-7)
@@ -68,9 +65,8 @@ type Model struct {
 func New(tasks []task.Task) Model {
 	return Model{
 		exec:         executor.New(tasks),
+		coord:        coordinator.New(),
 		showLogs:     true, // Logs panel visible by default
-		logHistory:   make(map[int][]string),
-		currentLogs:  []string{},
 		selectedTask: 0,
 		focusedPanel: FocusTaskList,
 	}
@@ -249,9 +245,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.logWriter = logWriter
 		m.logCh = logCh
 
-		// Reset coordination state for new task
-		m.logsDone = false
-		m.pendingResult = nil
+		// Initialize coordinator for new task
+		m.coord.StartTask(m.exec.Current())
 
 		// Initialize viewports if in two-column mode
 		if m.isTwoColumnRunning() {
@@ -288,14 +283,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case logLineMsg:
-		// Append log line to current task's accumulator
-		m.currentLogs = append(m.currentLogs, msg.line)
+		// Delegate log accumulation to coordinator
+		m.coord.AddLogLine(msg.line)
 
 		// Update log viewport content for two-column mode
 		if m.isTwoColumnRunning() {
 			// Only auto-scroll if viewport was at bottom (stick to bottom pattern)
 			wasAtBottom := m.logViewport.AtBottom()
-			m.logViewport.SetContent(strings.Join(m.currentLogs, "\n"))
+			m.logViewport.SetContent(strings.Join(m.coord.CurrentLogs(), "\n"))
 			if wasAtBottom {
 				m.logViewport.GotoBottom()
 			}
@@ -304,24 +299,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, listenForLogs(m.logCh)
 
 	case logDoneMsg:
-		// Log channel closed - all logs for current task have been received
-		m.logsDone = true
-
-		// If we have a pending task result (taskDoneMsg arrived first), process it now
-		if m.pendingResult != nil {
-			return m.completeTask(*m.pendingResult)
+		// Delegate to coordinator - returns completion msg if task result already received
+		if completeMsg := m.coord.LogsDone(); completeMsg != nil {
+			return m.completeTask(completeMsg.Result)
 		}
 		return m, nil
 
 	case taskDoneMsg:
-		// If logs are still streaming, defer processing until logDoneMsg arrives
-		if !m.logsDone {
-			m.pendingResult = &msg.result
-			return m, nil
+		// Delegate to coordinator - returns completion msg if logs already done
+		if completeMsg := m.coord.TaskDone(msg.result); completeMsg != nil {
+			return m.completeTask(completeMsg.Result)
 		}
-
-		// Logs already done, process immediately
-		return m.completeTask(msg.result)
+		return m, nil
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -481,12 +470,13 @@ func (m Model) renderSingleColumn() string {
 	}
 
 	// Show streaming logs while task is running
-	if !stopped && len(m.currentLogs) > 0 {
+	currentLogs := m.coord.CurrentLogs()
+	if !stopped && len(currentLogs) > 0 {
 		s.WriteString("\n")
 		s.WriteString(logHeaderStyle.Render("─── logs ───"))
 		s.WriteString("\n")
 		// Display only the last maxLogLines to keep view manageable
-		displayLogs := m.currentLogs
+		displayLogs := currentLogs
 		if len(displayLogs) > maxLogLines {
 			displayLogs = displayLogs[len(displayLogs)-maxLogLines:]
 		}
@@ -807,14 +797,11 @@ func (m Model) isTwoColumn() bool {
 // When stopped: shows historical logs for selected task
 func (m Model) getDisplayLogs() []string {
 	if m.exec.Stopped() {
-		// Show historical logs for selected task
-		if logs, ok := m.logHistory[m.selectedTask]; ok {
-			return logs
-		}
-		return nil
+		// Show historical logs for selected task (from coordinator)
+		return m.coord.LogsFor(m.selectedTask)
 	}
-	// Show current logs during execution
-	return m.currentLogs
+	// Show current logs during execution (from coordinator)
+	return m.coord.CurrentLogs()
 }
 
 // updateLogViewportForSelectedTask updates the log viewport content
@@ -942,18 +929,8 @@ func (m Model) startTask() (*logstream.ChannelWriter, <-chan string, tea.Cmd) {
 // completeTask handles task completion after both task execution and log streaming are done.
 // This ensures logs are correctly attributed to tasks regardless of message arrival order.
 func (m Model) completeTask(result task.Result) (Model, tea.Cmd) {
-	// Persist current logs to history for the completed task
-	// Note: exec.Current() points to the NEXT task after RunNext,
-	// so we need to subtract 1 to get the just-completed task index
-	taskIdx := m.exec.Current() - 1
-	if taskIdx >= 0 && len(m.currentLogs) > 0 {
-		m.logHistory[taskIdx] = m.currentLogs
-	}
-
-	// Clear current logs and coordination state for next task
-	m.currentLogs = []string{}
-	m.pendingResult = nil
-	m.logsDone = false
+	// Log persistence and coordination state handled by coordinator
+	// (logs already saved when TaskDone/LogsDone returned completion message)
 
 	// Stop execution if task failed
 	if result.Status == task.StatusFailed {

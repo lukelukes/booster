@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"booster/internal/coordinator"
 	"booster/internal/executor"
 	"booster/internal/logstream"
 	"booster/internal/task"
@@ -229,9 +230,11 @@ func TestUpdate_TaskDoneMsg(t *testing.T) {
 	_, ok := model.exec.RunNext(context.Background())
 	require.True(t, ok, "First task should run")
 
-	// Set logsDone to true to simulate logs being fully received
-	// (coordination fix: taskDoneMsg waits for logDoneMsg)
-	model.logsDone = true
+	// Initialize coordinator for this task (normally done by startTaskMsg)
+	model.coord.StartTask(0)
+
+	// Simulate logs being fully received via coordinator
+	model.coord.LogsDone()
 
 	// Send taskDoneMsg - should trigger next task
 	msg := taskDoneMsg{result: task.Result{Status: task.StatusDone}}
@@ -249,7 +252,7 @@ func TestUpdate_TaskDoneMsg(t *testing.T) {
 func TestUpdate_TaskDoneMsgWhenAllComplete(t *testing.T) {
 	// Create an executor that's already done
 	exec := executor.New([]task.Task{})
-	model := Model{exec: exec}
+	model := Model{exec: exec, coord: coordinator.New()}
 
 	msg := taskDoneMsg{result: task.Result{Status: task.StatusDone}}
 	newModel, cmd := model.Update(msg)
@@ -276,8 +279,9 @@ func TestUpdate_TaskFailure_StopsExecution(t *testing.T) {
 	require.True(t, ok, "Task2 should run")
 	require.Equal(t, task.StatusFailed, result2.Status)
 
-	// Set logsDone to true to simulate logs being fully received
-	model.logsDone = true
+	// Initialize coordinator and simulate logs complete
+	model.coord.StartTask(1)
+	model.coord.LogsDone()
 
 	// Send taskDoneMsg for failed task2 - should stop execution
 	msg := taskDoneMsg{result: result2}
@@ -740,7 +744,8 @@ func TestIntegration_FullTaskFlow(t *testing.T) {
 	require.True(t, ok, "Task1 should run")
 	assert.Equal(t, task.StatusDone, result1.Status)
 
-	model.logsDone = true // simulate logs complete
+	model.coord.StartTask(0)
+	model.coord.LogsDone() // simulate logs complete
 	newModel, cmd := model.Update(taskDoneMsg{result: result1})
 	model, ok = newModel.(Model)
 	require.True(t, ok, "newModel should be Model type")
@@ -751,7 +756,8 @@ func TestIntegration_FullTaskFlow(t *testing.T) {
 	require.True(t, ok, "Task2 should run")
 	assert.Equal(t, task.StatusSkipped, result2.Status)
 
-	model.logsDone = true // simulate logs complete
+	model.coord.StartTask(1)
+	model.coord.LogsDone() // simulate logs complete
 	newModel, cmd = model.Update(taskDoneMsg{result: result2})
 	model, ok = newModel.(Model)
 	require.True(t, ok, "newModel should be Model type")
@@ -762,7 +768,8 @@ func TestIntegration_FullTaskFlow(t *testing.T) {
 	require.True(t, ok, "Task3 should run")
 	assert.Equal(t, task.StatusFailed, result3.Status)
 
-	model.logsDone = true // simulate logs complete
+	model.coord.StartTask(2)
+	model.coord.LogsDone() // simulate logs complete
 	newModel, cmd = model.Update(taskDoneMsg{result: result3})
 	model, ok = newModel.(Model)
 	require.True(t, ok, "newModel should be Model type")
@@ -921,17 +928,17 @@ func TestLogStreaming_IntegrationWithModelUpdate(t *testing.T) {
 	newModel, cmd := model.Update(logLineMsg{line: "log line 1"})
 	model, ok2 := newModel.(Model)
 	require.True(t, ok2, "newModel should be Model type")
-	assert.Len(t, model.currentLogs, 1, "Should have 1 log line")
-	assert.Equal(t, "log line 1", model.currentLogs[0], "Should contain first log line")
+	assert.Len(t, model.coord.CurrentLogs(), 1, "Should have 1 log line")
+	assert.Equal(t, "log line 1", model.coord.CurrentLogs()[0], "Should contain first log line")
 	assert.NotNil(t, cmd, "Should return listenForLogs command")
 
 	// Second log line
 	newModel, cmd = model.Update(logLineMsg{line: "log line 2"})
 	model, ok2 = newModel.(Model)
 	require.True(t, ok2, "newModel should be Model type")
-	assert.Len(t, model.currentLogs, 2, "Should have 2 log lines")
-	assert.Equal(t, "log line 1", model.currentLogs[0], "Should contain first log line")
-	assert.Equal(t, "log line 2", model.currentLogs[1], "Should contain second log line")
+	assert.Len(t, model.coord.CurrentLogs(), 2, "Should have 2 log lines")
+	assert.Equal(t, "log line 1", model.coord.CurrentLogs()[0], "Should contain first log line")
+	assert.Equal(t, "log line 2", model.coord.CurrentLogs()[1], "Should contain second log line")
 	assert.NotNil(t, cmd, "Should return listenForLogs command")
 
 	// Log done
@@ -944,8 +951,8 @@ func TestLogStreaming_IntegrationWithModelUpdate(t *testing.T) {
 	newModel, _ = model.Update(taskDoneMsg{result: result})
 	model, ok2 = newModel.(Model)
 	require.True(t, ok2, "newModel should be Model type")
-	assert.Empty(t, model.currentLogs, "Current log lines should be cleared after task completion")
-	assert.Len(t, model.logHistory[0], 2, "Log lines should be moved to history")
+	assert.Empty(t, model.coord.CurrentLogs(), "Current log lines should be cleared after task completion")
+	assert.Len(t, model.coord.LogsFor(0), 2, "Log lines should be moved to history")
 }
 
 // TestLogStreaming_MaxLinesLimit verifies that log lines are capped at maxLogLines in the view.
@@ -960,7 +967,7 @@ func TestLogStreaming_MaxLinesLimit(t *testing.T) {
 	}
 
 	// All lines should be in currentLogs (not capped)
-	assert.Len(t, model.currentLogs, maxLogLines+5, "currentLogs should contain all lines")
+	assert.Len(t, model.coord.CurrentLogs(), maxLogLines+5, "currentLogs should contain all lines")
 
 	// Verify the view only shows the last maxLogLines
 	view := model.View()
@@ -982,6 +989,7 @@ func TestLogHistory_Persistence(t *testing.T) {
 	// Run task 1 and add logs
 	_, ok := model.exec.RunNext(context.Background())
 	require.True(t, ok, "Task1 should run")
+	model.coord.StartTask(0)
 
 	// Simulate log lines for task 1
 	newModel, _ := model.Update(logLineMsg{line: "task1 log line 1"})
@@ -990,24 +998,25 @@ func TestLogHistory_Persistence(t *testing.T) {
 	model = newModel.(Model)
 
 	// Verify currentLogs has the lines
-	assert.Len(t, model.currentLogs, 2, "currentLogs should have 2 lines")
-	assert.Equal(t, "task1 log line 1", model.currentLogs[0])
-	assert.Equal(t, "task1 log line 2", model.currentLogs[1])
+	assert.Len(t, model.coord.CurrentLogs(), 2, "currentLogs should have 2 lines")
+	assert.Equal(t, "task1 log line 1", model.coord.CurrentLogs()[0])
+	assert.Equal(t, "task1 log line 2", model.coord.CurrentLogs()[1])
 
-	// Complete task 1 (set logsDone to simulate log stream completion)
-	model.logsDone = true
+	// Complete task 1 (simulate log stream completion via coordinator)
+	model.coord.LogsDone()
 	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
 	model = newModel.(Model)
 
 	// Verify logs moved to history and currentLogs cleared
-	assert.Empty(t, model.currentLogs, "currentLogs should be cleared after task completion")
-	assert.Len(t, model.logHistory[0], 2, "logHistory[0] should have 2 lines")
-	assert.Equal(t, "task1 log line 1", model.logHistory[0][0])
-	assert.Equal(t, "task1 log line 2", model.logHistory[0][1])
+	assert.Empty(t, model.coord.CurrentLogs(), "currentLogs should be cleared after task completion")
+	assert.Len(t, model.coord.LogsFor(0), 2, "logHistory[0] should have 2 lines")
+	assert.Equal(t, "task1 log line 1", model.coord.LogsFor(0)[0])
+	assert.Equal(t, "task1 log line 2", model.coord.LogsFor(0)[1])
 
 	// Run task 2 and add logs
 	_, ok = model.exec.RunNext(context.Background())
 	require.True(t, ok, "Task2 should run")
+	model.coord.StartTask(1)
 
 	newModel, _ = model.Update(logLineMsg{line: "task2 log line 1"})
 	model = newModel.(Model)
@@ -1017,33 +1026,33 @@ func TestLogHistory_Persistence(t *testing.T) {
 	model = newModel.(Model)
 
 	// Complete task 2
-	model.logsDone = true
+	model.coord.LogsDone()
 	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
 	model = newModel.(Model)
 
 	// Verify task 1 logs still in history and task 2 logs added
-	assert.Len(t, model.logHistory[0], 2, "logHistory[0] should still have 2 lines")
-	assert.Len(t, model.logHistory[1], 3, "logHistory[1] should have 3 lines")
-	assert.Equal(t, "task2 log line 1", model.logHistory[1][0])
-	assert.Equal(t, "task2 log line 2", model.logHistory[1][1])
-	assert.Equal(t, "task2 log line 3", model.logHistory[1][2])
+	assert.Len(t, model.coord.LogsFor(0), 2, "logHistory[0] should still have 2 lines")
+	assert.Len(t, model.coord.LogsFor(1), 3, "logHistory[1] should have 3 lines")
+	assert.Equal(t, "task2 log line 1", model.coord.LogsFor(1)[0])
+	assert.Equal(t, "task2 log line 2", model.coord.LogsFor(1)[1])
+	assert.Equal(t, "task2 log line 3", model.coord.LogsFor(1)[2])
 
 	// Run task 3 with no logs
 	_, ok = model.exec.RunNext(context.Background())
 	require.True(t, ok, "Task3 should run")
+	model.coord.StartTask(2)
 
 	// Complete task 3 (no logs)
-	model.logsDone = true
+	model.coord.LogsDone()
 	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
 	model = newModel.(Model)
 
 	// Verify task 3 has no entry in logHistory (empty logs not stored)
-	_, exists := model.logHistory[2]
-	assert.False(t, exists, "logHistory[2] should not exist for task with no logs")
+	assert.Nil(t, model.coord.LogsFor(2), "logHistory[2] should be nil for task with no logs")
 
 	// Verify previous logs still intact
-	assert.Len(t, model.logHistory[0], 2, "logHistory[0] should still have 2 lines")
-	assert.Len(t, model.logHistory[1], 3, "logHistory[1] should still have 3 lines")
+	assert.Len(t, model.coord.LogsFor(0), 2, "logHistory[0] should still have 2 lines")
+	assert.Len(t, model.coord.LogsFor(1), 3, "logHistory[1] should still have 3 lines")
 }
 
 // TestSelectedTask_AutoAdvancement verifies selectedTask auto-advances on task completion.
@@ -1060,7 +1069,8 @@ func TestSelectedTask_AutoAdvancement(t *testing.T) {
 
 	// Run and complete task 1
 	_, _ = model.exec.RunNext(context.Background())
-	model.logsDone = true
+	model.coord.StartTask(0)
+	model.coord.LogsDone()
 	newModel, _ := model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
 	model = newModel.(Model)
 
@@ -1069,7 +1079,8 @@ func TestSelectedTask_AutoAdvancement(t *testing.T) {
 
 	// Run and complete task 2
 	_, _ = model.exec.RunNext(context.Background())
-	model.logsDone = true
+	model.coord.StartTask(1)
+	model.coord.LogsDone()
 	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
 	model = newModel.(Model)
 
@@ -1078,7 +1089,8 @@ func TestSelectedTask_AutoAdvancement(t *testing.T) {
 
 	// Run and complete task 3 (last task)
 	_, _ = model.exec.RunNext(context.Background())
-	model.logsDone = true
+	model.coord.StartTask(2)
+	model.coord.LogsDone()
 	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
 	model = newModel.(Model)
 
@@ -1096,29 +1108,31 @@ func TestLogHistory_FailedTask(t *testing.T) {
 
 	// Run and complete task 1 with logs
 	_, _ = model.exec.RunNext(context.Background())
+	model.coord.StartTask(0)
 	newModel, _ := model.Update(logLineMsg{line: "task1 log"})
 	model = newModel.(Model)
-	model.logsDone = true
+	model.coord.LogsDone()
 	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
 	model = newModel.(Model)
 
 	// Run task 2 with logs, then fail
 	_, _ = model.exec.RunNext(context.Background())
+	model.coord.StartTask(1)
 	newModel, _ = model.Update(logLineMsg{line: "task2 log 1"})
 	model = newModel.(Model)
 	newModel, _ = model.Update(logLineMsg{line: "task2 log 2"})
 	model = newModel.(Model)
-	model.logsDone = true
+	model.coord.LogsDone()
 	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusFailed}})
 	model = newModel.(Model)
 
 	// Verify both tasks have logs in history
-	assert.Len(t, model.logHistory[0], 1, "logHistory[0] should have 1 line")
-	assert.Equal(t, "task1 log", model.logHistory[0][0])
+	assert.Len(t, model.coord.LogsFor(0), 1, "logHistory[0] should have 1 line")
+	assert.Equal(t, "task1 log", model.coord.LogsFor(0)[0])
 
-	assert.Len(t, model.logHistory[1], 2, "logHistory[1] should have 2 lines")
-	assert.Equal(t, "task2 log 1", model.logHistory[1][0])
-	assert.Equal(t, "task2 log 2", model.logHistory[1][1])
+	assert.Len(t, model.coord.LogsFor(1), 2, "logHistory[1] should have 2 lines")
+	assert.Equal(t, "task2 log 1", model.coord.LogsFor(1)[0])
+	assert.Equal(t, "task2 log 2", model.coord.LogsFor(1)[1])
 
 	// Verify execution stopped
 	assert.True(t, model.exec.Stopped(), "Executor should be stopped after failure")
@@ -1136,6 +1150,7 @@ func TestLogTaskCoordination_TaskDoneBeforeLogDone(t *testing.T) {
 
 	// Run task 1
 	_, _ = model.exec.RunNext(context.Background())
+	model.coord.StartTask(0)
 
 	// Simulate log lines arriving
 	newModel, _ := model.Update(logLineMsg{line: "log line 1"})
@@ -1144,33 +1159,29 @@ func TestLogTaskCoordination_TaskDoneBeforeLogDone(t *testing.T) {
 	model = newModel.(Model)
 
 	// Simulate taskDoneMsg arriving BEFORE logDoneMsg (the race condition scenario)
-	// logsDone is false by default
-	assert.False(t, model.logsDone, "logsDone should be false initially")
 	newModel, cmd := model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
 	model = newModel.(Model)
 
-	// Task should NOT be completed yet - result should be pending
-	assert.NotNil(t, model.pendingResult, "pendingResult should be set when taskDone arrives before logDone")
+	// Task should NOT be completed yet - observable behavior: no command returned
 	assert.Nil(t, cmd, "Should not return command until logs are done")
-	assert.Len(t, model.currentLogs, 2, "currentLogs should still have lines")
+	assert.Len(t, model.coord.CurrentLogs(), 2, "currentLogs should still have lines")
 
 	// Now more logs arrive (simulating buffered channel draining)
 	newModel, _ = model.Update(logLineMsg{line: "log line 3"})
 	model = newModel.(Model)
-	assert.Len(t, model.currentLogs, 3, "currentLogs should have 3 lines now")
+	assert.Len(t, model.coord.CurrentLogs(), 3, "currentLogs should have 3 lines now")
 
 	// Finally logDoneMsg arrives
 	newModel, cmd = model.Update(logDoneMsg{})
 	model = newModel.(Model)
 
-	// NOW the task should be completed
-	assert.Nil(t, model.pendingResult, "pendingResult should be cleared after processing")
+	// NOW the task should be completed - observable behavior: command returned
 	assert.NotNil(t, cmd, "Should return command to start next task")
-	assert.Empty(t, model.currentLogs, "currentLogs should be cleared")
-	assert.Len(t, model.logHistory[0], 3, "All 3 log lines should be in history")
-	assert.Equal(t, "log line 1", model.logHistory[0][0])
-	assert.Equal(t, "log line 2", model.logHistory[0][1])
-	assert.Equal(t, "log line 3", model.logHistory[0][2])
+	assert.Empty(t, model.coord.CurrentLogs(), "currentLogs should be cleared")
+	assert.Len(t, model.coord.LogsFor(0), 3, "All 3 log lines should be in history")
+	assert.Equal(t, "log line 1", model.coord.LogsFor(0)[0])
+	assert.Equal(t, "log line 2", model.coord.LogsFor(0)[1])
+	assert.Equal(t, "log line 3", model.coord.LogsFor(0)[2])
 }
 
 // TestLogTaskCoordination_LogDoneBeforeTaskDone verifies normal case where
@@ -1184,6 +1195,7 @@ func TestLogTaskCoordination_LogDoneBeforeTaskDone(t *testing.T) {
 
 	// Run task 1
 	_, _ = model.exec.RunNext(context.Background())
+	model.coord.StartTask(0)
 
 	// Simulate log lines arriving
 	newModel, _ := model.Update(logLineMsg{line: "log line 1"})
@@ -1193,17 +1205,16 @@ func TestLogTaskCoordination_LogDoneBeforeTaskDone(t *testing.T) {
 	newModel, cmd := model.Update(logDoneMsg{})
 	model = newModel.(Model)
 
-	assert.True(t, model.logsDone, "logsDone should be true after logDoneMsg")
-	assert.Nil(t, model.pendingResult, "No pending result when logs done first")
+	// Observable behavior: no command returned yet (waiting for task result)
 	assert.Nil(t, cmd, "No command from logDoneMsg alone")
 
-	// Now taskDoneMsg arrives - should process immediately since logsDone=true
+	// Now taskDoneMsg arrives - should complete since logs already finished
 	newModel, cmd = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
 	model = newModel.(Model)
 
 	assert.NotNil(t, cmd, "Should return command to start next task")
-	assert.Empty(t, model.currentLogs, "currentLogs should be cleared")
-	assert.Len(t, model.logHistory[0], 1, "Log should be in history")
+	assert.Empty(t, model.coord.CurrentLogs(), "currentLogs should be cleared")
+	assert.Len(t, model.coord.LogsFor(0), 1, "Log should be in history")
 }
 
 // TestFocusMode_TabKeyTogglesFocus verifies Tab key switches focus between panels.
@@ -1470,8 +1481,8 @@ func TestShowLogs_PanelShowsPlaceholderWhenEmpty(t *testing.T) {
 	model.logViewport = viewport.New(layout.RightWidth-2, layout.Height-5)
 
 	// No logs yet
-	assert.Empty(t, model.currentLogs, "currentLogs should be empty")
-	assert.Empty(t, model.logHistory, "logHistory should be empty")
+	assert.Empty(t, model.coord.CurrentLogs(), "currentLogs should be empty")
+	assert.Nil(t, model.coord.LogsFor(0), "logHistory should be empty")
 
 	// Render view
 	view := model.View()
@@ -1496,13 +1507,22 @@ func TestShowLogs_DisplaysHistoryWhenStopped(t *testing.T) {
 	layout := NewLayout(model.width, model.height)
 	model.logViewport = viewport.New(layout.RightWidth-2, layout.Height-5)
 
-	// Simulate task 1 completion with logs
+	// Simulate task 1 completion with logs via coordinator
 	_, _ = model.exec.RunNext(context.Background())
-	model.logHistory[0] = []string{"task1 log line 1", "task1 log line 2"}
+	model.coord.StartTask(0)
+	model.coord.AddLogLine("task1 log line 1")
+	model.coord.AddLogLine("task1 log line 2")
+	model.coord.LogsDone()
+	model.coord.TaskDone(task.Result{Status: task.StatusDone})
 
-	// Simulate task 2 completion with logs
+	// Simulate task 2 completion with logs via coordinator
 	_, _ = model.exec.RunNext(context.Background())
-	model.logHistory[1] = []string{"task2 log line 1", "task2 log line 2", "task2 log line 3"}
+	model.coord.StartTask(1)
+	model.coord.AddLogLine("task2 log line 1")
+	model.coord.AddLogLine("task2 log line 2")
+	model.coord.AddLogLine("task2 log line 3")
+	model.coord.LogsDone()
+	model.coord.TaskDone(task.Result{Status: task.StatusDone})
 
 	// Set selectedTask to 0
 	model.selectedTask = 0
@@ -1583,15 +1603,24 @@ func TestShowLogs_GetDisplayLogs(t *testing.T) {
 	}
 	model := New(tasks)
 
-	// Simulate all tasks completed with logs
+	// Simulate all tasks completed with logs via coordinator
 	_, _ = model.exec.RunNext(context.Background())
-	model.logHistory[0] = []string{"task1 log"}
+	model.coord.StartTask(0)
+	model.coord.AddLogLine("task1 log")
+	model.coord.LogsDone()
+	model.coord.TaskDone(task.Result{Status: task.StatusDone})
 
 	_, _ = model.exec.RunNext(context.Background())
-	model.logHistory[1] = []string{"task2 log"}
+	model.coord.StartTask(1)
+	model.coord.AddLogLine("task2 log")
+	model.coord.LogsDone()
+	model.coord.TaskDone(task.Result{Status: task.StatusDone})
 
 	_, _ = model.exec.RunNext(context.Background())
+	model.coord.StartTask(2)
 	// task3 has no logs
+	model.coord.LogsDone()
+	model.coord.TaskDone(task.Result{Status: task.StatusDone})
 
 	// When stopped, should return history for selected task
 	model.selectedTask = 0

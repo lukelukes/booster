@@ -93,7 +93,6 @@ func MultiWriter(stream, buffer io.Writer) io.Writer {
 
 func Log(ctx context.Context, msg string) {
 	if w := Writer(ctx); w != nil {
-
 		if len(msg) == 0 || msg[len(msg)-1] != '\n' {
 			msg += "\n"
 		}

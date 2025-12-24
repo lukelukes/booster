@@ -20,7 +20,7 @@ func NewSpinner() SpinnerModel {
 }
 
 func (s SpinnerModel) Update(msg tea.Msg) SpinnerModel {
-	if _, ok := msg.(spinnerTickMsg); ok {
+	if _, ok := msg.(spinnerTickMsg); ok && len(s.frames) > 0 {
 		s.frame = (s.frame + 1) % len(s.frames)
 	}
 	return s

@@ -46,6 +46,7 @@ func (t TaskListModel) Update(msg tea.Msg) (TaskListModel, tea.Cmd) {
 		}
 	}
 
+	t.RefreshContent()
 	return t, nil
 }
 
@@ -83,9 +84,12 @@ func (t *TaskListModel) ensureVisible() {
 }
 
 func (t TaskListModel) View() string {
+	return t.viewport.View()
+}
+
+func (t *TaskListModel) RefreshContent() {
 	content := t.renderTaskLines()
 	t.viewport.SetContent(content)
-	return t.viewport.View()
 }
 
 func (t TaskListModel) renderTaskLines() string {

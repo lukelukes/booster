@@ -19,6 +19,12 @@ import (
 const (
 	maxLogLines      = 8
 	outputViewHeight = 15
+
+	// Viewport dimension adjustments for panel sizing.
+	panelBorderWidth  = 2 // left + right border
+	logPanelOverhead  = 5 // border(2) + title(1) + help(2)
+	taskPanelOverhead = 8 // border(2) + title(1) + progress(2) + blank(1) + help(2)
+	taskPanelPadding  = 4 // border(2) + padding(2)
 )
 
 type FocusPanel int
@@ -75,6 +81,13 @@ func New(tasks []task.Task) Model {
 func (m Model) debugLog(format string, args ...any) {
 	if m.debugFile != nil {
 		fmt.Fprintf(m.debugFile, format+"\n", args...)
+	}
+}
+
+func (m *Model) Close() {
+	if m.debugFile != nil {
+		m.debugFile.Close()
+		m.debugFile = nil
 	}
 }
 
@@ -236,14 +249,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if m.isTwoColumnRunning() {
 			m.logViewport = viewport.New(
-				m.layout.RightWidth-2,
-				m.layout.Height-5,
+				m.layout.RightWidth-panelBorderWidth,
+				m.layout.Height-logPanelOverhead,
 			)
 			m.logViewport.SetContent("")
 
-			taskViewportHeight := max(m.layout.Height-8, 3)
+			taskViewportHeight := max(m.layout.Height-taskPanelOverhead, 3)
 			m.taskViewport = viewport.New(
-				m.layout.LeftWidth-4,
+				m.layout.LeftWidth-taskPanelPadding,
 				taskViewportHeight,
 			)
 		}
@@ -299,13 +312,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.layout.IsTwoColumn() {
-			m.logViewport.Width = m.layout.RightWidth - 2
-			m.logViewport.Height = m.layout.Height - 5
+			m.logViewport.Width = m.layout.RightWidth - panelBorderWidth
+			m.logViewport.Height = m.layout.Height - logPanelOverhead
 
-			taskViewportHeight := max(
-
-				m.layout.Height-8, 3)
-			m.taskViewport.Width = m.layout.LeftWidth - 4
+			taskViewportHeight := max(m.layout.Height-taskPanelOverhead, 3)
+			m.taskViewport.Width = m.layout.LeftWidth - taskPanelPadding
 			m.taskViewport.Height = taskViewportHeight
 		}
 		return m, nil
@@ -428,7 +439,6 @@ func (m Model) renderSingleColumn() string {
 			displayLogs = displayLogs[len(displayLogs)-maxLogLines:]
 		}
 		for _, line := range displayLogs {
-
 			displayLine := line
 			maxWidth := m.width - 4
 			if maxWidth > 0 && len(displayLine) > maxWidth {
@@ -517,7 +527,6 @@ func (m Model) renderTwoColumn(layout Layout) string {
 			Focused:     leftFocused,
 		}
 	} else {
-
 		leftContent := m.renderTaskListContent(layout.LeftWidth + layout.RightWidth - 2)
 		leftPanel = Panel{
 			Title:       "BOOSTER",
@@ -531,7 +540,6 @@ func (m Model) renderTwoColumn(layout Layout) string {
 
 	var panels string
 	if m.showLogs {
-
 		logs := m.getDisplayLogs()
 		rightContent := m.logViewport.View()
 		if len(logs) == 0 {
@@ -674,7 +682,6 @@ func (m Model) renderTaskLines(width int) string {
 		}
 
 		if isSelected {
-
 			lineWidth := lipgloss.Width(line)
 			if lineWidth < width {
 				line += strings.Repeat(" ", width-lineWidth-4)
@@ -740,15 +747,13 @@ func (m *Model) initLogViewportForHistory() {
 	}
 
 	m.logViewport = viewport.New(
-		m.layout.RightWidth-2,
-		m.layout.Height-5,
+		m.layout.RightWidth-panelBorderWidth,
+		m.layout.Height-logPanelOverhead,
 	)
 
-	taskViewportHeight := max(
-
-		m.layout.Height-8, 3)
+	taskViewportHeight := max(m.layout.Height-taskPanelOverhead, 3)
 	m.taskViewport = viewport.New(
-		m.layout.LeftWidth-4,
+		m.layout.LeftWidth-taskPanelPadding,
 		taskViewportHeight,
 	)
 
@@ -809,7 +814,6 @@ func (m Model) completeTask(result task.Result) (Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.exec.Stopped() {
-
 		m.initLogViewportForHistory()
 		return m, nil
 	}

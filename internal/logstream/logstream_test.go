@@ -86,9 +86,7 @@ func TestChannelWriter_WriteAfterClose(t *testing.T) {
 func TestContextWriter(t *testing.T) {
 	ctx := context.Background()
 
-
 	assert.Nil(t, Writer(ctx))
-
 
 	var buf bytes.Buffer
 	ctx = WithWriter(ctx, &buf)
@@ -135,7 +133,6 @@ func TestChannelWriter_ConcurrentWrites(t *testing.T) {
 	w, ch := NewChannelWriter(1000)
 	var wg sync.WaitGroup
 
-
 	for i := range 100 {
 		wg.Add(1)
 		go func(n int) {
@@ -145,12 +142,10 @@ func TestChannelWriter_ConcurrentWrites(t *testing.T) {
 		}(i)
 	}
 
-
 	go func() {
 		wg.Wait()
 		w.Close()
 	}()
-
 
 	count := 0
 	for range ch {

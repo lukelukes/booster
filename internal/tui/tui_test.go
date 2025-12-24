@@ -1175,7 +1175,7 @@ func TestFocusMode_JKScrollsLogsWhenFocused(t *testing.T) {
 	model = m.(Model)
 	model.focusedPanel = FocusLogs
 
-	model.logViewport = viewport.New(model.layout.RightWidth-2, model.layout.Height-5)
+	model.logViewport = viewport.New(model.layout.RightWidth-panelBorderWidth, model.layout.Height-logPanelOverhead)
 
 	lines := make([]string, 50)
 	for i := range lines {
@@ -1204,7 +1204,7 @@ func TestFocusMode_GKeyJumpsToBottom(t *testing.T) {
 	model = m.(Model)
 	model.focusedPanel = FocusLogs
 
-	model.logViewport = viewport.New(model.layout.RightWidth-2, model.layout.Height-5)
+	model.logViewport = viewport.New(model.layout.RightWidth-panelBorderWidth, model.layout.Height-logPanelOverhead)
 
 	lines := make([]string, 50)
 	for i := range lines {
@@ -1227,7 +1227,7 @@ func TestFocusMode_GKeyIgnoredWhenTaskListFocused(t *testing.T) {
 	model = m.(Model)
 	model.focusedPanel = FocusTaskList
 
-	model.logViewport = viewport.New(model.layout.RightWidth-2, model.layout.Height-5)
+	model.logViewport = viewport.New(model.layout.RightWidth-panelBorderWidth, model.layout.Height-logPanelOverhead)
 	lines := make([]string, 50)
 	for i := range lines {
 		lines[i] = fmt.Sprintf("log line %d", i)
@@ -1304,7 +1304,7 @@ func TestShowLogs_PanelShowsPlaceholderWhenEmpty(t *testing.T) {
 	newModel, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	model = newModel.(Model)
 
-	model.logViewport = viewport.New(model.layout.RightWidth-2, model.layout.Height-5)
+	model.logViewport = viewport.New(model.layout.RightWidth-panelBorderWidth, model.layout.Height-logPanelOverhead)
 
 	assert.Empty(t, model.coord.CurrentLogs(), "currentLogs should be empty")
 	assert.Nil(t, model.coord.LogsFor(0), "logHistory should be empty")
@@ -1325,7 +1325,7 @@ func TestShowLogs_DisplaysHistoryWhenStopped(t *testing.T) {
 	m, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	model = m.(Model)
 
-	model.logViewport = viewport.New(model.layout.RightWidth-2, model.layout.Height-5)
+	model.logViewport = viewport.New(model.layout.RightWidth-panelBorderWidth, model.layout.Height-logPanelOverhead)
 
 	_, _ = model.exec.RunNext(context.Background())
 	model.coord.StartTask(0)
@@ -1367,7 +1367,7 @@ func TestShowLogs_AutoscrollStickToBottom(t *testing.T) {
 	newModel, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	model = newModel.(Model)
 
-	model.logViewport = viewport.New(model.layout.RightWidth-2, model.layout.Height-5)
+	model.logViewport = viewport.New(model.layout.RightWidth-panelBorderWidth, model.layout.Height-logPanelOverhead)
 
 	for i := range 50 {
 		msg := logLineMsg{line: fmt.Sprintf("log line %d", i)}

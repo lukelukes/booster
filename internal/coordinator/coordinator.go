@@ -55,7 +55,6 @@ func (c *Coordinator) LogsDone() *TaskCompleteMsg {
 
 func (c *Coordinator) TaskDone(result task.Result) *TaskCompleteMsg {
 	if c.pendingResult == nil && !c.logsDone {
-
 		c.pendingResult = &result
 		return nil
 	}

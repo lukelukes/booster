@@ -64,15 +64,12 @@ func TestExpand(t *testing.T) {
 }
 
 func TestExpand_FallsBackWhenHomeUnset(t *testing.T) {
-	// t.Setenv registers cleanup to restore original values after test
 	t.Setenv("HOME", "")
 	t.Setenv("USER", "")
 
-	// Actually unset them (empty string != unset for UserHomeDir)
 	require.NoError(t, os.Unsetenv("HOME"))
 	require.NoError(t, os.Unsetenv("USER"))
 
-	// When home dir lookup fails, Expand should return the original path unchanged
 	result := Expand("~/test")
 	assert.Equal(t, "~/test", result)
 }

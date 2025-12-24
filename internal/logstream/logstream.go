@@ -1,5 +1,3 @@
-// Package logstream provides streaming output support for command execution.
-// It allows commands to emit output line-by-line through channels for real-time display.
 package logstream
 
 import (
@@ -11,7 +9,6 @@ import (
 
 type ctxKey struct{}
 
-// Writer returns an io.Writer from context for streaming output.
 // Returns nil if no writer is set (caller should handle gracefully).
 func Writer(ctx context.Context) io.Writer {
 	w, _ := ctx.Value(ctxKey{}).(io.Writer)

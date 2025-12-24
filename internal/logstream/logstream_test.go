@@ -36,19 +36,16 @@ func TestChannelWriter_MultipleLines(t *testing.T) {
 func TestChannelWriter_PartialLine(t *testing.T) {
 	w, ch := NewChannelWriter(10)
 
-	// Write partial line
 	_, err := w.Write([]byte("partial"))
 	require.NoError(t, err)
 
-	// Channel should be empty (no complete line yet)
 	select {
 	case line := <-ch:
 		t.Fatalf("expected no line, got: %s", line)
 	default:
-		// expected
+
 	}
 
-	// Complete the line
 	_, err = w.Write([]byte(" complete\n"))
 	require.NoError(t, err)
 

@@ -83,7 +83,7 @@ func TestParseSourceTargetArgs(t *testing.T) {
 			name: "error on second item",
 			args: []any{
 				map[string]any{"source": "a", "target": "b"},
-				map[string]any{"source": "c"}, // missing target
+				map[string]any{"source": "c"},
 			},
 			wantErr: "arg 2: missing 'target'",
 		},
@@ -92,7 +92,7 @@ func TestParseSourceTargetArgs(t *testing.T) {
 			args: []any{
 				map[string]any{"source": "a", "target": "b"},
 				map[string]any{"source": "c", "target": "d"},
-				map[string]any{"source": 123, "target": "e"}, // invalid source
+				map[string]any{"source": 123, "target": "e"},
 			},
 			wantErr: "arg 3: 'source' must be a string",
 		},
@@ -115,7 +115,6 @@ func TestParseSourceTargetArgs(t *testing.T) {
 }
 
 func TestParseSourceTargetArgs_ErrorIndices(t *testing.T) {
-	// Ensures error messages use 1-indexed positions
 	tests := []struct {
 		name          string
 		args          []any
@@ -132,7 +131,7 @@ func TestParseSourceTargetArgs_ErrorIndices(t *testing.T) {
 			name: "second arg error shows arg 2",
 			args: []any{
 				map[string]any{"source": "a", "target": "b"},
-				map[string]any{"target": "c"}, // missing source
+				map[string]any{"target": "c"},
 			},
 			expectedIndex: "arg 2:",
 		},
@@ -141,7 +140,7 @@ func TestParseSourceTargetArgs_ErrorIndices(t *testing.T) {
 			args: []any{
 				map[string]any{"source": "a", "target": "b"},
 				map[string]any{"source": "c", "target": "d"},
-				map[string]any{"source": "e"}, // missing target
+				map[string]any{"source": "e"},
 			},
 			expectedIndex: "arg 3:",
 		},

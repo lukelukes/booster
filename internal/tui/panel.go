@@ -6,21 +6,17 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Panel represents a bordered panel with optional title and content.
 type Panel struct {
 	Title       string
 	Content     string
 	Width       int
 	Height      int
 	BorderColor lipgloss.Color
-	Focused     bool // When false, content is dimmed
+	Focused     bool
 }
 
-// DefaultBorderColor is the default panel border color.
 var DefaultBorderColor = lipgloss.Color("#808080")
 
-// RenderPanel renders a bordered panel with optional title.
-// The title appears inline with the top border.
 func RenderPanel(p Panel) string {
 	width := p.Width
 	height := p.Height
@@ -32,7 +28,6 @@ func RenderPanel(p Panel) string {
 		height = 3
 	}
 
-	// Border takes 2 chars width and 2 lines height
 	contentWidth := max(width-2, 1)
 	contentHeight := max(height-2, 1)
 
@@ -42,7 +37,6 @@ func RenderPanel(p Panel) string {
 		processedContent = lipgloss.NewStyle().Faint(true).Render(processedContent)
 	}
 
-	// lipgloss Width/Height on bordered style controls inner content area
 	borderStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(p.BorderColor).
@@ -58,8 +52,6 @@ func RenderPanel(p Panel) string {
 	return rendered
 }
 
-// processContent handles content wrapping and truncation.
-// Uses lipgloss.Width() for ANSI-aware width measurement.
 func processContent(content string, maxWidth, maxHeight int) string {
 	if content == "" {
 		return ""
@@ -111,7 +103,6 @@ func insertTitleInBorder(rendered, title string, totalWidth int) string {
 		titleLen = len(titleWithSpacing)
 	}
 
-	// Build: "╭─" + title + dashes + "╮"
 	remainingDashes := max(totalWidth-titleLen-3, 0)
 	newTopBorder := colorPrefix + "╭─" + titleWithSpacing + strings.Repeat("─", remainingDashes) + "╮" + colorSuffix
 
@@ -119,7 +110,6 @@ func insertTitleInBorder(rendered, title string, totalWidth int) string {
 	return strings.Join(lines, "\n")
 }
 
-// extractANSIPrefix extracts ANSI escape codes from the beginning of a string
 func extractANSIPrefix(s string) string {
 	var prefix strings.Builder
 	inEscape := false
@@ -141,9 +131,7 @@ func extractANSIPrefix(s string) string {
 	return prefix.String()
 }
 
-// extractANSISuffix extracts ANSI reset codes from the end of a string
 func extractANSISuffix(s string) string {
-	// Look for reset sequence at the end
 	if strings.HasSuffix(s, "\x1b[0m") {
 		return "\x1b[0m"
 	}

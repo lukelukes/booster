@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mockTask is a test double for task.Task
 type mockTask struct {
 	result    task.Result
 	name      string
@@ -54,21 +53,18 @@ func TestExecutor_RunNext_ExecutesTasks(t *testing.T) {
 	}
 	exec := New(tasks)
 
-	// Run first task
 	result1, ok := exec.RunNext(context.Background())
 	require.True(t, ok)
 	assert.Equal(t, task.StatusDone, result1.Status)
 	assert.Equal(t, 1, exec.Current())
 	assert.False(t, exec.Done())
 
-	// Run second task
 	result2, ok := exec.RunNext(context.Background())
 	require.True(t, ok)
 	assert.Equal(t, task.StatusSkipped, result2.Status)
 	assert.Equal(t, 2, exec.Current())
 	assert.True(t, exec.Done())
 
-	// No more tasks
 	_, ok = exec.RunNext(context.Background())
 	assert.False(t, ok)
 }
@@ -109,7 +105,6 @@ func TestExecutor_Summary(t *testing.T) {
 	}
 	exec := New(tasks)
 
-	// Run all tasks
 	for range tasks {
 		exec.RunNext(context.Background())
 	}
@@ -122,8 +117,6 @@ func TestExecutor_Summary(t *testing.T) {
 }
 
 func TestExecutor_Summary_NoFailures(t *testing.T) {
-	// Tests boundary condition: Failed == 0 means HasFailures must be false
-	// This kills mutation: s.Failed > 0 → s.Failed >= 0
 	tasks := []task.Task{
 		&mockTask{name: "t1", result: task.Result{Status: task.StatusDone}},
 		&mockTask{name: "t2", result: task.Result{Status: task.StatusSkipped}},
@@ -148,7 +141,6 @@ func TestExecutor_ResultAt(t *testing.T) {
 	}
 	exec := New(tasks)
 
-	// Before running, results are pending
 	assert.Equal(t, task.StatusPending, exec.ResultAt(0).Status)
 	assert.Equal(t, task.StatusPending, exec.ResultAt(1).Status)
 
@@ -163,25 +155,20 @@ func TestExecutor_ResultAt_OutOfBounds(t *testing.T) {
 	}
 	exec := New(tasks)
 
-	// Negative index returns pending
 	assert.Equal(t, task.StatusPending, exec.ResultAt(-1).Status)
 
-	// Index beyond length returns pending
 	assert.Equal(t, task.StatusPending, exec.ResultAt(100).Status)
 
-	// Index at exactly length returns pending
 	assert.Equal(t, task.StatusPending, exec.ResultAt(1).Status)
 }
 
 func TestExecutor_RunNext_OnEmptyExecutor(t *testing.T) {
 	exec := New(nil)
 
-	// Calling RunNext on empty executor returns false
 	result, ok := exec.RunNext(context.Background())
 	assert.False(t, ok)
 	assert.Equal(t, task.Result{}, result)
 
-	// Calling again still returns false
 	_, ok = exec.RunNext(context.Background())
 	assert.False(t, ok)
 }
@@ -194,19 +181,15 @@ func TestExecutor_Abort_StopsExecution(t *testing.T) {
 	}
 	exec := New(tasks)
 
-	// Run first task
 	result1, ok := exec.RunNext(context.Background())
 	require.True(t, ok)
 	assert.Equal(t, task.StatusDone, result1.Status)
 
-	// Abort execution
 	exec.Abort()
 
-	// RunNext should now return false
 	_, ok = exec.RunNext(context.Background())
 	assert.False(t, ok, "RunNext should return false after Abort")
 
-	// Stopped should be true
 	assert.True(t, exec.Stopped())
 
 	// Done should still be false (not all tasks ran)

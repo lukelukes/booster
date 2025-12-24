@@ -9,21 +9,14 @@ import (
 	"strings"
 )
 
-// knownBrewPaths are the standard Homebrew installation paths.
-// We check these directly instead of relying on PATH, which may be stale
-// if Homebrew was installed during the current session.
 var knownBrewPaths = []string{
-	"/opt/homebrew/bin/brew",              // Apple Silicon Macs
-	"/usr/local/bin/brew",                 // Intel Macs
-	"/home/linuxbrew/.linuxbrew/bin/brew", // Linux default
+	"/opt/homebrew/bin/brew",
+	"/usr/local/bin/brew",
+	"/home/linuxbrew/.linuxbrew/bin/brew",
 }
 
-// BrewPathFinder is a function that finds the brew binary path.
-// The default implementation checks well-known filesystem locations.
-// This can be overridden for testing.
 type BrewPathFinder func() (path string, found bool)
 
-// defaultBrewPathFinder checks well-known filesystem locations for brew.
 func defaultBrewPathFinder() (string, bool) {
 	for _, path := range knownBrewPaths {
 		if _, err := os.Stat(path); err == nil {
@@ -33,40 +26,26 @@ func defaultBrewPathFinder() (string, bool) {
 	return "", false
 }
 
-// PackageManager abstracts over different system package managers.
 type PackageManager interface {
-	// Name returns the package manager identifier (e.g., "paru", "homebrew").
 	Name() string
 
-	// ListInstalled returns all installed package names.
-	// Used for batch idempotency checks (O(1) instead of O(n) shell calls).
 	ListInstalled(ctx context.Context) ([]string, error)
 
-	// Install installs the given packages.
-	// Returns the command output (stdout/stderr combined) and any error.
 	Install(ctx context.Context, pkgs []string) (output string, err error)
 
-	// ListInstalledCasks returns all installed cask names.
-	// Returns empty slice on non-Homebrew managers.
 	ListInstalledCasks(ctx context.Context) ([]string, error)
 
-	// InstallCasks installs Homebrew casks.
-	// Returns the command output (stdout/stderr combined) and any error.
-	// No-op on non-Homebrew managers.
 	InstallCasks(ctx context.Context, casks []string) (output string, err error)
 
-	// SupportsCasks returns true if this manager supports casks (Homebrew only).
 	SupportsCasks() bool
 }
 
-// PacmanManager implements PackageManager for Arch Linux using paru/pacman.
 type PacmanManager struct {
 	Runner cmdexec.Runner
-	// Helper is the AUR helper to use (paru or yay). Defaults to paru.
+
 	Helper string
 }
 
-// NewPacmanManager creates a new PacmanManager with the given runner.
 func NewPacmanManager(runner cmdexec.Runner) *PacmanManager {
 	if runner == nil {
 		runner = cmdexec.DefaultRunner()
@@ -79,7 +58,6 @@ func (m *PacmanManager) Name() string {
 }
 
 func (m *PacmanManager) ListInstalled(ctx context.Context) ([]string, error) {
-	// pacman -Qq returns just package names, one per line
 	output, err := m.Runner.Run(ctx, "pacman", "-Qq")
 	if err != nil {
 		return nil, fmt.Errorf("list installed packages: %w", err)
@@ -97,8 +75,6 @@ func (m *PacmanManager) Install(ctx context.Context, pkgs []string) (string, err
 		helper = "paru"
 	}
 
-	// paru -S --noconfirm --needed --skipreview pkg1 pkg2 ...
-	// --skipreview skips PKGBUILD review prompts for AUR packages
 	args := append([]string{"-S", "--noconfirm", "--needed", "--skipreview"}, pkgs...)
 	output, err := m.Runner.Run(ctx, helper, args...)
 	if err != nil {
@@ -108,12 +84,10 @@ func (m *PacmanManager) Install(ctx context.Context, pkgs []string) (string, err
 }
 
 func (m *PacmanManager) ListInstalledCasks(ctx context.Context) ([]string, error) {
-	// Pacman doesn't support casks
 	return nil, nil
 }
 
 func (m *PacmanManager) InstallCasks(ctx context.Context, casks []string) (string, error) {
-	// Pacman doesn't support casks - no-op
 	return "", nil
 }
 
@@ -121,14 +95,11 @@ func (m *PacmanManager) SupportsCasks() bool {
 	return false
 }
 
-// HomebrewManager implements PackageManager for macOS using Homebrew.
 type HomebrewManager struct {
 	Runner     cmdexec.Runner
 	PathFinder BrewPathFinder
 }
 
-// NewHomebrewManager creates a new HomebrewManager with the given runner and optional PathFinder.
-// If pathFinder is nil, the default implementation will be used.
 func NewHomebrewManager(runner cmdexec.Runner, pathFinder BrewPathFinder) *HomebrewManager {
 	if runner == nil {
 		runner = cmdexec.DefaultRunner()
@@ -139,9 +110,6 @@ func NewHomebrewManager(runner cmdexec.Runner, pathFinder BrewPathFinder) *Homeb
 	}
 }
 
-// brewPath returns the path to the brew binary.
-// Checks well-known locations directly to handle fresh installs in the same session,
-// falling back to "brew" (PATH lookup) if not found.
 func (m *HomebrewManager) brewPath() string {
 	finder := m.PathFinder
 	if finder == nil {
@@ -203,7 +171,6 @@ func (m *HomebrewManager) SupportsCasks() bool {
 	return true
 }
 
-// parseLines splits output by newlines and filters empty strings.
 func parseLines(output string) []string {
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	var result []string
@@ -215,7 +182,6 @@ func parseLines(output string) []string {
 	return result
 }
 
-// toSet converts a slice to a map for O(1) lookups.
 func toSet(items []string) map[string]bool {
 	set := make(map[string]bool, len(items))
 	for _, item := range items {
@@ -224,7 +190,6 @@ func toSet(items []string) map[string]bool {
 	return set
 }
 
-// PkgInstall installs packages using the system package manager.
 type PkgInstall struct {
 	Manager  PackageManager
 	OS       string
@@ -232,7 +197,6 @@ type PkgInstall struct {
 	Casks    []string
 }
 
-// Name returns a human-readable description for display.
 func (t *PkgInstall) Name() string {
 	parts := []string{}
 	if len(t.Packages) > 0 {
@@ -255,16 +219,11 @@ func (t *PkgInstall) Name() string {
 	return "install packages: " + strings.Join(parts, " + ")
 }
 
-// NeedsSudo returns true on Linux (paru/pacman need sudo), false on macOS (brew doesn't).
-// paru handles sudo internally but needs credentials cached before the TUI starts.
 func (t *PkgInstall) NeedsSudo() bool {
 	return t.OS != "darwin"
 }
 
-// Run executes the package installation. It is idempotent.
-// Uses batch checking for efficiency: O(2) shell calls instead of O(n).
 func (t *PkgInstall) Run(ctx context.Context) Result {
-	// Warn if casks specified on non-macOS
 	if err := t.validateCaskSupport(); err != nil {
 		return Result{
 			Status:  StatusFailed,
@@ -273,11 +232,8 @@ func (t *PkgInstall) Run(ctx context.Context) Result {
 		}
 	}
 
-	// Use clean context for queries (no log streaming) - we only want to
-	// stream the actual install output, not the package list queries
 	queryCtx := context.Background()
 
-	// Determine what needs to be installed
 	toInstall, err := t.findMissingPackages(queryCtx)
 	if err != nil {
 		return Result{Status: StatusFailed, Error: err}
@@ -288,16 +244,13 @@ func (t *PkgInstall) Run(ctx context.Context) Result {
 		return Result{Status: StatusFailed, Error: err}
 	}
 
-	// If everything is installed, skip
 	if len(toInstall) == 0 && len(casksToInstall) == 0 {
 		return Result{Status: StatusSkipped, Message: "all packages already installed"}
 	}
 
-	// Install packages and casks (use original ctx with log streaming)
 	return t.performInstallation(ctx, toInstall, casksToInstall)
 }
 
-// validateCaskSupport returns an error if casks are specified on a non-macOS system.
 func (t *PkgInstall) validateCaskSupport() error {
 	if len(t.Casks) > 0 && t.OS != "darwin" && !t.Manager.SupportsCasks() {
 		return fmt.Errorf("casks specified but OS is %s (not darwin)", t.OS)
@@ -305,7 +258,6 @@ func (t *PkgInstall) validateCaskSupport() error {
 	return nil
 }
 
-// findMissingPackages returns the list of packages that need to be installed.
 func (t *PkgInstall) findMissingPackages(ctx context.Context) ([]string, error) {
 	if len(t.Packages) == 0 {
 		return nil, nil
@@ -326,7 +278,6 @@ func (t *PkgInstall) findMissingPackages(ctx context.Context) ([]string, error) 
 	return toInstall, nil
 }
 
-// findMissingCasks returns the list of casks that need to be installed.
 func (t *PkgInstall) findMissingCasks(ctx context.Context) ([]string, error) {
 	if len(t.Casks) == 0 {
 		return nil, nil
@@ -347,7 +298,6 @@ func (t *PkgInstall) findMissingCasks(ctx context.Context) ([]string, error) {
 	return toInstall, nil
 }
 
-// installStats holds counts for generating result messages.
 type installStats struct {
 	totalPkgs      int
 	installedPkgs  int
@@ -355,7 +305,6 @@ type installStats struct {
 	installedCasks int
 }
 
-// performInstallation installs the specified packages and casks.
 func (t *PkgInstall) performInstallation(ctx context.Context, packages, casks []string) Result {
 	var allOutput strings.Builder
 

@@ -1,20 +1,15 @@
-// Package coordinator handles task execution coordination including
-// log streaming and the race condition between task completion and log delivery.
 package coordinator
 
 import (
 	"booster/internal/task"
 )
 
-// TaskCompleteMsg is sent when both task execution AND log streaming are done.
-// This replaces the separate taskDoneMsg and logDoneMsg that the TUI previously handled.
 type TaskCompleteMsg struct {
 	TaskIndex int
 	Result    task.Result
 	Logs      []string
 }
 
-// Coordinator manages the race condition between task completion and log streaming.
 // It ensures that logs are correctly attributed to tasks regardless of message arrival order.
 //
 // Usage:

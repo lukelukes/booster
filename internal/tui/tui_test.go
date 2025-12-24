@@ -17,7 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mockTask is a simple task implementation for testing.
 type mockTask struct {
 	name   string
 	result task.Result
@@ -35,7 +34,6 @@ func (m *mockTask) NeedsSudo() bool {
 	return false
 }
 
-// newMockTask creates a mock task with the given name and result.
 func newMockTask(name string, status task.Status, output string, err error) *mockTask {
 	return &mockTask{
 		name: name,
@@ -47,7 +45,6 @@ func newMockTask(name string, status task.Status, output string, err error) *moc
 	}
 }
 
-// newMockTaskWithMessage creates a mock task with a custom message.
 func newMockTaskWithMessage(name string, status task.Status, message string) *mockTask {
 	return &mockTask{
 		name: name,
@@ -58,7 +55,6 @@ func newMockTaskWithMessage(name string, status task.Status, message string) *mo
 	}
 }
 
-// TestNew verifies that New creates a model with correct initial state.
 func TestNew(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "", nil),
@@ -72,7 +68,6 @@ func TestNew(t *testing.T) {
 	assert.Equal(t, 2, model.exec.Total(), "should have correct number of tasks")
 }
 
-// TestInit_WithTasks verifies Init returns a command to run the first task.
 func TestInit_WithTasks(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "", nil),
@@ -84,7 +79,6 @@ func TestInit_WithTasks(t *testing.T) {
 	assert.NotNil(t, cmd, "Init should return a command when tasks exist")
 }
 
-// TestInit_EmptyTasks verifies Init returns nil when no tasks exist.
 func TestInit_EmptyTasks(t *testing.T) {
 	model := New([]task.Task{})
 
@@ -93,15 +87,14 @@ func TestInit_EmptyTasks(t *testing.T) {
 	assert.Nil(t, cmd, "Init should return nil when no tasks exist")
 }
 
-// TestUpdate_KeyHandling verifies key handling behavior in various states.
 func TestUpdate_KeyHandling(t *testing.T) {
 	tests := []struct {
 		name            string
 		setupModel      func() Model
 		keyMsg          tea.KeyMsg
 		wantQuitCmd     bool
-		wantShowOutput  *bool // nil means don't check
-		wantToggleCount int   // for multiple toggle test
+		wantShowOutput  *bool
+		wantToggleCount int
 	}{
 		{
 			name: "q quits",
@@ -197,19 +190,16 @@ func TestUpdate_KeyHandling(t *testing.T) {
 		})
 	}
 
-	// Test output toggle twice (separate test due to stateful nature)
 	t.Run("o toggles output twice when done", func(t *testing.T) {
 		exec := executor.New([]task.Task{})
 		model := Model{exec: exec, showOutput: false}
 
-		// First toggle to true
 		newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")})
 		assert.Nil(t, cmd, "Should not return a command")
 		updatedModel, ok := newModel.(Model)
 		require.True(t, ok, "newModel should be Model type")
 		assert.True(t, updatedModel.showOutput, "showOutput should be toggled to true")
 
-		// Second toggle back to false
 		newModel2, cmd2 := updatedModel.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")})
 		assert.Nil(t, cmd2, "Should not return a command")
 		updatedModel2, ok2 := newModel2.(Model)
@@ -218,7 +208,6 @@ func TestUpdate_KeyHandling(t *testing.T) {
 	})
 }
 
-// TestUpdate_TaskDoneMsg verifies taskDoneMsg triggers next task execution.
 func TestUpdate_TaskDoneMsg(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "", nil),
@@ -226,31 +215,23 @@ func TestUpdate_TaskDoneMsg(t *testing.T) {
 	}
 	model := New(tasks)
 
-	// Manually advance executor to simulate first task completion
 	_, ok := model.exec.RunNext(context.Background())
 	require.True(t, ok, "First task should run")
 
-	// Initialize coordinator for this task (normally done by startTaskMsg)
 	model.coord.StartTask(0)
 
-	// Simulate logs being fully received via coordinator
 	model.coord.LogsDone()
 
-	// Send taskDoneMsg - should trigger next task
 	msg := taskDoneMsg{result: task.Result{Status: task.StatusDone}}
 	newModel, cmd := model.Update(msg)
 
 	assert.NotNil(t, cmd, "Should return command to run next task")
 	assert.IsType(t, Model{}, newModel, "Update should return Model type")
 
-	// startTask returns a batch command, verify it's not nil
-	// (The batch contains runTask and listenForLogs commands)
 	assert.NotNil(t, cmd, "Batch command should not be nil")
 }
 
-// TestUpdate_TaskDoneMsgWhenAllComplete verifies taskDoneMsg is ignored when all tasks are done.
 func TestUpdate_TaskDoneMsgWhenAllComplete(t *testing.T) {
-	// Create an executor that's already done
 	exec := executor.New([]task.Task{})
 	model := Model{exec: exec, coord: coordinator.New()}
 
@@ -265,52 +246,43 @@ func TestUpdate_TaskFailure_StopsExecution(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "", nil),
 		newMockTask("task2", task.StatusFailed, "", errors.New("fail")),
-		newMockTask("task3", task.StatusDone, "", nil), // Should NOT run
+		newMockTask("task3", task.StatusDone, "", nil),
 	}
 	model := New(tasks)
 
-	// Manually run task1 through executor to set up state
 	result1, ok := model.exec.RunNext(context.Background())
 	require.True(t, ok, "Task1 should run")
 	require.Equal(t, task.StatusDone, result1.Status)
 
-	// Manually run task2 (which fails) through executor
 	result2, ok := model.exec.RunNext(context.Background())
 	require.True(t, ok, "Task2 should run")
 	require.Equal(t, task.StatusFailed, result2.Status)
 
-	// Initialize coordinator and simulate logs complete
 	model.coord.StartTask(1)
 	model.coord.LogsDone()
 
-	// Send taskDoneMsg for failed task2 - should stop execution
 	msg := taskDoneMsg{result: result2}
 	newModel, cmd := model.Update(msg)
 	model = newModel.(Model)
 
-	// Critical assertions:
 	assert.Nil(t, cmd, "Should NOT return command after failure")
 	assert.True(t, model.exec.Stopped(), "Executor should be stopped")
 	assert.False(t, model.exec.Done(), "Should NOT be done (task3 didn't run)")
 
-	// Verify task3 is still pending
 	assert.Equal(t, task.StatusPending, model.exec.ResultAt(2).Status,
 		"Task3 should remain pending after abort")
 
-	// Verify view shows pending task (not run - shown as pending in task list)
 	view := model.View()
 	assert.Contains(t, view, "task3", "Should show pending task in list")
 	assert.Contains(t, view, "BOOSTER FAILED", "Should show failure summary")
 }
 
-// TestUpdate_UnknownMessageIgnored verifies unknown messages don't cause issues.
 func TestUpdate_UnknownMessageIgnored(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
 	model := New(tasks)
 
-	// Send unknown message type
 	type unknownMsg struct{}
 	newModel, cmd := model.Update(unknownMsg{})
 
@@ -318,7 +290,6 @@ func TestUpdate_UnknownMessageIgnored(t *testing.T) {
 	assert.IsType(t, Model{}, newModel, "Update should return Model type")
 }
 
-// TestView_ContainsTitle verifies the view contains the title.
 func TestView_ContainsTitle(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "", nil),
@@ -330,12 +301,11 @@ func TestView_ContainsTitle(t *testing.T) {
 	assert.Contains(t, view, "BOOSTER", "View should contain title")
 }
 
-// TestView_TaskStatus verifies tasks are displayed correctly based on their status.
 func TestView_TaskStatus(t *testing.T) {
 	tests := []struct {
 		name          string
 		setupModel    func() Model
-		executeCount  int // number of tasks to execute before checking view
+		executeCount  int
 		checkTaskName string
 		wantContains  []string
 		wantHelper    func(t *testing.T, view string)
@@ -350,11 +320,11 @@ func TestView_TaskStatus(t *testing.T) {
 				}
 				return New(tasks)
 			},
-			executeCount:  1, // Execute first task so second is running and third is pending
+			executeCount:  1,
 			checkTaskName: "pending task",
 			wantContains: []string{
 				"pending task",
-				"  pending task", // Pending tasks have leading spaces
+				"  pending task",
 			},
 		},
 		{
@@ -366,7 +336,7 @@ func TestView_TaskStatus(t *testing.T) {
 				}
 				return New(tasks)
 			},
-			executeCount:  0, // First task should show as running
+			executeCount:  0,
 			checkTaskName: "running task",
 			wantContains: []string{
 				"running task",
@@ -445,7 +415,7 @@ func TestView_TaskStatus(t *testing.T) {
 			checkTaskName: "failed task",
 			wantContains: []string{
 				"failed task",
-				"FAILED", // Shows in failure box even with nil error
+				"FAILED",
 			},
 		},
 	}
@@ -454,7 +424,6 @@ func TestView_TaskStatus(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			model := tt.setupModel()
 
-			// Execute tasks as needed
 			for i := 0; i < tt.executeCount; i++ {
 				_, ok := model.exec.RunNext(context.Background())
 				require.True(t, ok, "Task %d should run", i+1)
@@ -462,12 +431,10 @@ func TestView_TaskStatus(t *testing.T) {
 
 			view := model.View()
 
-			// Check string contains
 			for _, want := range tt.wantContains {
 				assert.Contains(t, view, want, "View should contain: %s", want)
 			}
 
-			// Use helper assertions if provided
 			if tt.wantHelper != nil {
 				tt.wantHelper(t, view)
 			}
@@ -475,7 +442,6 @@ func TestView_TaskStatus(t *testing.T) {
 	}
 }
 
-// viewTestCase defines test cases for view rendering tests.
 type viewTestCase struct {
 	name            string
 	tasks           []task.Task
@@ -484,25 +450,21 @@ type viewTestCase struct {
 	wantNotContains []string
 }
 
-// runViewTests is a test helper that executes view rendering test cases.
-// It creates a model, executes all tasks, sets showOutput, and asserts the view contains/doesn't contain expected strings.
-// Uses narrow terminal width (50) to test single-column mode.
 func runViewTests(t *testing.T, tests []viewTestCase) {
 	t.Helper()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			model := New(tt.tasks)
-			// Set terminal dimensions for viewport (narrow for single-column mode)
+
 			model.width = 50
 			model.height = 40
 
-			// Execute all tasks
 			for range tt.tasks {
 				_, _ = model.exec.RunNext(context.Background())
 			}
 
 			model.showOutput = tt.showOutput
-			// Initialize viewport when showing output (simulates pressing 'o')
+
 			if tt.showOutput {
 				model.outputViewport = model.createOutputViewport()
 			}
@@ -520,7 +482,6 @@ func runViewTests(t *testing.T, tests []viewTestCase) {
 	}
 }
 
-// TestView_Summary verifies summary is displayed correctly based on task outcomes.
 func TestView_Summary(t *testing.T) {
 	tests := []viewTestCase{
 		{
@@ -552,7 +513,6 @@ func TestView_Summary(t *testing.T) {
 	runViewTests(t, tests)
 }
 
-// TestView_HelpText verifies help text is displayed correctly in different scenarios.
 func TestView_HelpText(t *testing.T) {
 	tests := []viewTestCase{
 		{
@@ -593,7 +553,6 @@ func TestView_HelpText(t *testing.T) {
 	runViewTests(t, tests)
 }
 
-// TestView_OutputSection verifies output section behavior in different scenarios.
 func TestView_OutputSection(t *testing.T) {
 	tests := []viewTestCase{
 		{
@@ -652,7 +611,6 @@ func TestView_OutputSection(t *testing.T) {
 	runViewTests(t, tests)
 }
 
-// TestHasTaskOutput verifies hasTaskOutput correctly detects task output.
 func TestHasTaskOutput(t *testing.T) {
 	t.Run("returns false when no tasks have output", func(t *testing.T) {
 		tasks := []task.Task{

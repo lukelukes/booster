@@ -138,23 +138,17 @@ func TestSymlinkCreate_Idempotency(t *testing.T) {
 
 	task := &SymlinkCreate{Source: source, Target: target}
 
-	// First run: creates
 	result1 := task.Run(context.Background())
 	assert.Equal(t, StatusDone, result1.Status)
 
-	// Second run: skips
 	result2 := task.Run(context.Background())
 	assert.Equal(t, StatusSkipped, result2.Status)
 
-	// Third run: still skips
 	result3 := task.Run(context.Background())
 	assert.Equal(t, StatusSkipped, result3.Status)
 }
 
 func TestSymlinkCreate_RelativePath(t *testing.T) {
-	// This test verifies that relative source paths are converted to absolute paths.
-	// Without this fix, symlinks would break when the target is in a different directory
-	// because relative paths resolve from the symlink's location, not the CWD.
 	dir := t.TempDir()
 	sourceDir := filepath.Join(dir, "dotfiles")
 	targetDir := filepath.Join(dir, "home")
@@ -165,21 +159,17 @@ func TestSymlinkCreate_RelativePath(t *testing.T) {
 	targetFile := filepath.Join(targetDir, ".zshrc")
 	require.NoError(t, os.WriteFile(sourceFile, []byte("export PATH=..."), 0o644))
 
-	// Change to sourceDir's parent (t.Chdir auto-restores on test cleanup)
 	t.Chdir(dir)
 
-	// Use relative path for source
 	task := &SymlinkCreate{Source: "dotfiles/zshrc", Target: targetFile}
 	result := task.Run(context.Background())
 
 	assert.Equal(t, StatusDone, result.Status)
 
-	// The symlink should work - verify we can read through it
 	content, err := os.ReadFile(targetFile)
 	require.NoError(t, err)
 	assert.Equal(t, "export PATH=...", string(content))
 
-	// Verify the symlink contains an absolute path
 	linkDest, err := os.Readlink(targetFile)
 	require.NoError(t, err)
 	assert.True(t, filepath.IsAbs(linkDest), "symlink should contain absolute path, got: %s", linkDest)
@@ -189,8 +179,6 @@ func TestSymlinkCreate_Name(t *testing.T) {
 	task := &SymlinkCreate{Source: "dotfiles/zshrc", Target: "~/.zshrc"}
 	assert.Equal(t, "link dotfiles/zshrc → ~/.zshrc", task.Name())
 }
-
-// Factory tests
 
 func TestNewSymlinkCreate(t *testing.T) {
 	tests := []struct {

@@ -30,7 +30,6 @@ func TestPkgManagerInstall_Paru(t *testing.T) {
 				return "", errors.New("not found")
 			},
 			runFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
-				// pacman -Q paru succeeds
 				if name == "pacman" && len(args) >= 2 && args[0] == "-Q" && args[1] == "paru" {
 					return []byte("paru 2.0.0-1"), nil
 				}
@@ -45,7 +44,6 @@ func TestPkgManagerInstall_Paru(t *testing.T) {
 				return "", errors.New("not found")
 			},
 			runFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
-				// All commands succeed for installation
 				return []byte("ok"), nil
 			},
 			wantStatus:    StatusDone,
@@ -61,11 +59,10 @@ func TestPkgManagerInstall_Paru(t *testing.T) {
 				return "", errors.New("not found")
 			},
 			runFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
-				// pacman -Q fails (not registered)
 				if name == "pacman" && len(args) >= 2 && args[0] == "-Q" {
 					return nil, errors.New("package not found")
 				}
-				// Other commands succeed
+
 				return []byte("ok"), nil
 			},
 			wantStatus: StatusDone,
@@ -93,7 +90,7 @@ func TestPkgManagerInstall_Paru(t *testing.T) {
 				if name == "git" {
 					return []byte("ok"), nil
 				}
-				// Implementation uses sh -c "cd ... && makepkg ..."
+
 				if name == "sh" && len(args) >= 2 && args[0] == "-c" {
 					return []byte("error: missing dependencies"), errors.New("makepkg failed")
 				}
@@ -105,11 +102,9 @@ func TestPkgManagerInstall_Paru(t *testing.T) {
 		{
 			name: "first run installs",
 			lookPath: func(name string) (string, error) {
-				// Binary does not exist yet
 				return "", errors.New("not found")
 			},
 			runFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
-				// pacman -Q fails (not installed)
 				if name == "pacman" && len(args) >= 2 && args[0] == "-Q" && args[1] == "paru" {
 					return nil, errors.New("not found")
 				}
@@ -121,14 +116,12 @@ func TestPkgManagerInstall_Paru(t *testing.T) {
 		{
 			name: "second run skips",
 			lookPath: func(name string) (string, error) {
-				// Binary already exists
 				if name == "paru" {
 					return "/usr/bin/paru", nil
 				}
 				return "", errors.New("not found")
 			},
 			runFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
-				// pacman -Q succeeds (already installed)
 				if name == "pacman" && len(args) >= 2 && args[0] == "-Q" && args[1] == "paru" {
 					return []byte("paru 2.0.0-1"), nil
 				}
@@ -141,12 +134,10 @@ func TestPkgManagerInstall_Paru(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Track makepkg calls if requested
 			var makepkgCalled bool
 			runFunc := tt.runFunc
 			if tt.checkMakepkgCalled != nil {
 				runFunc = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-					// Implementation uses sh -c for makepkg
 					if name == "sh" && len(args) >= 2 && args[0] == "-c" {
 						makepkgCalled = true
 					}
@@ -283,7 +274,7 @@ func TestNewPkgManagerInstall(t *testing.T) {
 func TestPkgManagerInstall_Homebrew(t *testing.T) {
 	tests := []struct {
 		name            string
-		brewPathFinder  BrewPathFinder // Override findBrewPath for this test
+		brewPathFinder  BrewPathFinder
 		lookPath        func(string) (string, error)
 		runFunc         func(context.Context, string, ...string) ([]byte, error)
 		wantStatus      Status
@@ -296,7 +287,7 @@ func TestPkgManagerInstall_Homebrew(t *testing.T) {
 		{
 			name: "skips when already installed",
 			brewPathFinder: func() (string, bool) {
-				return "/opt/homebrew/bin/brew", true // Simulate brew found
+				return "/opt/homebrew/bin/brew", true
 			},
 			runFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				return nil, errors.New("unexpected command")
@@ -308,13 +299,13 @@ func TestPkgManagerInstall_Homebrew(t *testing.T) {
 		{
 			name: "installs when missing",
 			brewPathFinder: func() (string, bool) {
-				return "", false // Simulate brew not found
+				return "", false
 			},
 			runFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				if name == "curl" {
 					return []byte("#!/bin/bash\necho 'install script'"), nil
 				}
-				// Implementation uses: bash -c "NONINTERACTIVE=1 bash /tmp/script.sh"
+
 				if name == "bash" && len(args) >= 2 && args[0] == "-c" {
 					return []byte("==> Installation successful!"), nil
 				}
@@ -328,7 +319,7 @@ func TestPkgManagerInstall_Homebrew(t *testing.T) {
 		{
 			name: "fails when curl fails",
 			brewPathFinder: func() (string, bool) {
-				return "", false // Simulate brew not found
+				return "", false
 			},
 			runFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				if name == "curl" {
@@ -342,13 +333,13 @@ func TestPkgManagerInstall_Homebrew(t *testing.T) {
 		{
 			name: "fails when install script fails",
 			brewPathFinder: func() (string, bool) {
-				return "", false // Simulate brew not found
+				return "", false
 			},
 			runFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				if name == "curl" {
 					return []byte("#!/bin/bash\necho 'install script'"), nil
 				}
-				// Implementation uses: bash -c "NONINTERACTIVE=1 bash /tmp/script.sh"
+
 				if name == "bash" && len(args) >= 2 && args[0] == "-c" {
 					return []byte("Error: Xcode command line tools not installed"), errors.New("install failed")
 				}
@@ -364,7 +355,6 @@ func TestPkgManagerInstall_Homebrew(t *testing.T) {
 			curlCalled := false
 			bashCalled := false
 
-			// Wrap runFunc to track curl and bash calls
 			wrappedRunFunc := func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				if name == "curl" {
 					curlCalled = true
@@ -408,18 +398,15 @@ func TestPkgManagerInstall_Homebrew(t *testing.T) {
 	}
 }
 
-// Context cancellation tests
-
 func TestPkgManagerInstall_RespectsContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
+	cancel()
 
 	mock := &cmdexec.MockRunner{
 		LookPathFunc: func(name string) (string, error) {
 			return "", errors.New("not found")
 		},
 		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
-			// Check if context is cancelled
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -432,7 +419,6 @@ func TestPkgManagerInstall_RespectsContextCancellation(t *testing.T) {
 	task := &PkgManagerInstall{Manager: "paru", Runner: mock}
 	result := task.Run(ctx)
 
-	// Should fail because context was cancelled
 	assert.Equal(t, StatusFailed, result.Status)
 	assert.Error(t, result.Error)
 	assert.ErrorIs(t, result.Error, context.Canceled)
@@ -446,7 +432,6 @@ func TestPkgManagerInstall_CancelledDuringClone(t *testing.T) {
 			return "", errors.New("not found")
 		},
 		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
-			// Cancel context during git clone
 			if name == "git" {
 				cancel()
 				return nil, context.Canceled

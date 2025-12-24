@@ -68,7 +68,7 @@ func New(tasks []task.Task) Model {
 
 	// Enable debug logging if BOOSTER_DEBUG is set to a file path
 	if debugPath := os.Getenv("BOOSTER_DEBUG"); debugPath != "" {
-		if f, err := os.OpenFile(debugPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644); err == nil {
+		if f, err := os.OpenFile(debugPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644); err == nil {
 			m.debugFile = f
 		}
 	}
@@ -78,7 +78,7 @@ func New(tasks []task.Task) Model {
 
 // debugLog writes a formatted message to the debug log file if debugging is enabled.
 // Enable by setting BOOSTER_DEBUG=/path/to/debug.log
-func (m Model) debugLog(format string, args ...interface{}) {
+func (m Model) debugLog(format string, args ...any) {
 	if m.debugFile != nil {
 		fmt.Fprintf(m.debugFile, format+"\n", args...)
 	}

@@ -30,23 +30,31 @@ func NewTaskList(exec *executor.Executor) TaskListModel {
 func (t TaskListModel) Update(msg tea.Msg) (TaskListModel, tea.Cmd) {
 	t.spinner = t.spinner.Update(msg)
 
+	needsRefresh := false
+
 	switch msg := msg.(type) {
+	case spinnerTickMsg:
+		needsRefresh = !t.exec.Stopped()
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "j", "down":
 			if t.selected < t.exec.Total()-1 {
 				t.selected++
 				t.ensureVisible()
+				needsRefresh = true
 			}
 		case "k", "up":
 			if t.selected > 0 {
 				t.selected--
 				t.ensureVisible()
+				needsRefresh = true
 			}
 		}
 	}
 
-	t.RefreshContent()
+	if needsRefresh {
+		t.RefreshContent()
+	}
 	return t, nil
 }
 

@@ -7,8 +7,9 @@ import (
 	"booster/internal/task"
 	"context"
 	"fmt"
+	"os"
+	"sort"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -19,8 +20,6 @@ const (
 	maxLogLines      = 8
 	outputViewHeight = 15
 )
-
-var spinnerFrames = []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"}
 
 type FocusPanel int
 
@@ -38,27 +37,50 @@ type Model struct {
 	width      int
 	height     int
 
+	// Cached layout (updated on resize, avoids recalculation)
+	layout Layout
+
 	outputViewport viewport.Model
-
-	logViewport viewport.Model
-
-	taskViewport viewport.Model
+	logViewport    viewport.Model
+	taskViewport   viewport.Model
 
 	logCh        <-chan string
 	logWriter    *logstream.ChannelWriter
 	selectedTask int
 	focusedPanel FocusPanel
 
-	spinnerFrame int
+	// Child model for spinner animation
+	spinner SpinnerModel
+
+	// Debug logging (enabled via BOOSTER_DEBUG env var)
+	debugFile *os.File
 }
 
 func New(tasks []task.Task) Model {
-	return Model{
+	m := Model{
 		exec:         executor.New(tasks),
 		coord:        coordinator.New(),
 		showLogs:     true,
 		selectedTask: 0,
 		focusedPanel: FocusTaskList,
+		spinner:      NewSpinner(),
+	}
+
+	// Enable debug logging if BOOSTER_DEBUG is set to a file path
+	if debugPath := os.Getenv("BOOSTER_DEBUG"); debugPath != "" {
+		if f, err := os.OpenFile(debugPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644); err == nil {
+			m.debugFile = f
+		}
+	}
+
+	return m
+}
+
+// debugLog writes a formatted message to the debug log file if debugging is enabled.
+// Enable by setting BOOSTER_DEBUG=/path/to/debug.log
+func (m Model) debugLog(format string, args ...interface{}) {
+	if m.debugFile != nil {
+		fmt.Fprintf(m.debugFile, format+"\n", args...)
 	}
 }
 
@@ -87,19 +109,17 @@ type logDoneMsg struct{}
 type spinnerTickMsg struct{}
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.debugLog("msg: %T", msg)
+
 	switch msg := msg.(type) {
 	case tea.MouseMsg:
-
 		if m.isTwoColumn() && m.showLogs {
-			contentWidth, contentHeight := m.contentDimensions()
-			layout := NewLayout(contentWidth, contentHeight)
-
+			// Use cached layout for panel boundary detection
 			clickX := msg.X - 2
 
 			switch msg.Button {
 			case tea.MouseButtonLeft:
-
-				if clickX < layout.LeftWidth {
+				if clickX < m.layout.LeftWidth {
 					m.focusedPanel = FocusTaskList
 				} else {
 					m.focusedPanel = FocusLogs
@@ -107,8 +127,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case tea.MouseButtonWheelUp:
-
-				if clickX < layout.LeftWidth {
+				if clickX < m.layout.LeftWidth {
 					m.taskViewport.ScrollUp(3)
 				} else {
 					m.logViewport.ScrollUp(3)
@@ -116,7 +135,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case tea.MouseButtonWheelDown:
-				if clickX < layout.LeftWidth {
+				if clickX < m.layout.LeftWidth {
 					m.taskViewport.ScrollDown(3)
 				} else {
 					m.logViewport.ScrollDown(3)
@@ -223,20 +242,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.coord.StartTask(m.exec.Current())
 
 		if m.isTwoColumnRunning() {
-			contentWidth, contentHeight := m.contentDimensions()
-			layout := NewLayout(contentWidth, contentHeight)
-
+			// Use cached layout for viewport initialization
 			m.logViewport = viewport.New(
-				layout.RightWidth-2,
-				layout.Height-5,
+				m.layout.RightWidth-2,
+				m.layout.Height-5,
 			)
 			m.logViewport.SetContent("")
 
-			taskViewportHeight := max(
-
-				layout.Height-8, 3)
+			taskViewportHeight := max(m.layout.Height-8, 3)
 			m.taskViewport = viewport.New(
-				layout.LeftWidth-4,
+				m.layout.LeftWidth-4,
 				taskViewportHeight,
 			)
 		}
@@ -244,11 +259,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case spinnerTickMsg:
-
-		m.spinnerFrame = (m.spinnerFrame + 1) % len(spinnerFrames)
+		m.spinner = m.spinner.Update(msg)
 
 		if !m.exec.Stopped() {
-			return m, spinnerTick()
+			return m, m.spinner.Tick()
 		}
 		return m, nil
 
@@ -284,8 +298,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-		// Calculate content dimensions (account for app container)
+		// Calculate content dimensions and cache layout
 		contentWidth, contentHeight := m.contentDimensions()
+		m.layout = NewLayout(contentWidth, contentHeight)
 
 		// Update viewport size if output is shown
 		if m.showOutput {
@@ -293,16 +308,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.outputViewport.Height = min(outputViewHeight, contentHeight/2)
 		}
 		// Update viewport sizes for two-column mode
-		if m.isTwoColumn() {
-			layout := NewLayout(contentWidth, contentHeight)
-			m.logViewport.Width = layout.RightWidth - 2 // Panel border takes 2 chars (left + right)
-			m.logViewport.Height = layout.Height - 5    // Panel border (2) + title (1) + help bar (2)
+		if m.layout.IsTwoColumn() {
+			m.logViewport.Width = m.layout.RightWidth - 2 // Panel border takes 2 chars (left + right)
+			m.logViewport.Height = m.layout.Height - 5    // Panel border (2) + title (1) + help bar (2)
 
 			// Task viewport
 			taskViewportHeight := max(
 				// border(2) + title(1) + progress(2) + blank(1) + help(2)
-				layout.Height-8, 3)
-			m.taskViewport.Width = layout.LeftWidth - 4
+				m.layout.Height-8, 3)
+			m.taskViewport.Width = m.layout.LeftWidth - 4
 			m.taskViewport.Height = taskViewportHeight
 		}
 		return m, nil
@@ -312,8 +326,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // spinner returns the current spinner character for animation.
-func (m Model) spinner() string {
-	return spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
+func (m Model) spinnerView() string {
+	return m.spinner.View()
 }
 
 // contentDimensions calculates available space for content within the app container.
@@ -336,15 +350,10 @@ func (m Model) contentDimensions() (width, height int) {
 
 // View renders the TUI.
 func (m Model) View() string {
-	contentWidth, contentHeight := m.contentDimensions()
-
-	// Create layout with adjusted dimensions
-	layout := NewLayout(contentWidth, contentHeight)
-
 	var content string
-	// Use two-column layout for wide terminals (both running and stopped)
-	if layout.IsTwoColumn() {
-		content = m.renderTwoColumn(layout)
+	// Use cached layout for rendering decisions
+	if m.layout.IsTwoColumn() {
+		content = m.renderTwoColumn(m.layout)
 	} else {
 		// Single-column rendering for narrow terminals
 		content = m.renderSingleColumn()
@@ -428,7 +437,7 @@ func (m Model) renderSingleColumn() string {
 			}
 		} else if i == current && !stopped {
 			// Currently running with animated spinner
-			line = runningStyle.Render("→ " + t.Name() + " " + m.spinner())
+			line = runningStyle.Render("→ " + t.Name() + " " + m.spinnerView())
 		} else {
 			// Pending
 			line = pendingStyle.Render("  " + t.Name())
@@ -720,7 +729,7 @@ func (m Model) renderTaskLines(width int) string {
 			}
 		} else if i == current && !stopped {
 			// Currently running with animated spinner
-			line = runningStyle.Render(prefix + "→ " + t.Name() + " " + m.spinner())
+			line = runningStyle.Render(prefix + "→ " + t.Name() + " " + m.spinnerView())
 		} else {
 			// Pending
 			line = pendingStyle.Render(prefix + "  " + t.Name())
@@ -748,16 +757,12 @@ func (m Model) renderTaskLines(width int) string {
 
 // isTwoColumnRunning returns true if two-column mode is active (running only).
 func (m Model) isTwoColumnRunning() bool {
-	contentWidth, contentHeight := m.contentDimensions()
-	layout := NewLayout(contentWidth, contentHeight)
-	return layout.IsTwoColumn() && !m.exec.Stopped()
+	return m.layout.IsTwoColumn() && !m.exec.Stopped()
 }
 
 // isTwoColumn returns true if two-column mode is active (both running and stopped).
 func (m Model) isTwoColumn() bool {
-	contentWidth, contentHeight := m.contentDimensions()
-	layout := NewLayout(contentWidth, contentHeight)
-	return layout.IsTwoColumn()
+	return m.layout.IsTwoColumn()
 }
 
 // getDisplayLogs returns the logs to display based on execution state.
@@ -811,21 +816,18 @@ func (m *Model) initLogViewportForHistory() {
 		return
 	}
 
-	contentWidth, contentHeight := m.contentDimensions()
-	layout := NewLayout(contentWidth, contentHeight)
-
-	// Initialize log viewport
+	// Initialize log viewport using cached layout
 	m.logViewport = viewport.New(
-		layout.RightWidth-2, // Panel border takes 2 chars (left + right)
-		layout.Height-5,     // Panel border (2) + title (1) + help bar (2)
+		m.layout.RightWidth-2, // Panel border takes 2 chars (left + right)
+		m.layout.Height-5,     // Panel border (2) + title (1) + help bar (2)
 	)
 
 	// Initialize task viewport
 	taskViewportHeight := max(
 		// border(2) + title(1) + progress(2) + blank(1) + help(2)
-		layout.Height-8, 3)
+		m.layout.Height-8, 3)
 	m.taskViewport = viewport.New(
-		layout.LeftWidth-4, // Panel border(2) + padding(2)
+		m.layout.LeftWidth-4, // Panel border(2) + padding(2)
 		taskViewportHeight,
 	)
 
@@ -852,14 +854,10 @@ func (m Model) buildSummaryData() SummaryData {
 		}
 	}
 
-	// Sort by duration descending (simple bubble sort for small list)
-	for i := 0; i < len(timings); i++ {
-		for j := i + 1; j < len(timings); j++ {
-			if timings[j].Duration > timings[i].Duration {
-				timings[i], timings[j] = timings[j], timings[i]
-			}
-		}
-	}
+	// Sort by duration descending
+	sort.Slice(timings, func(i, j int) bool {
+		return timings[i].Duration > timings[j].Duration
+	})
 
 	// Take top 3
 	if len(timings) > 3 {
@@ -888,7 +886,7 @@ func (m Model) startTask() (*logstream.ChannelWriter, <-chan string, tea.Cmd) {
 	cmd := tea.Batch(
 		runTask(m.exec, logWriter),
 		listenForLogs(logCh),
-		spinnerTick(),
+		m.spinner.Tick(),
 	)
 
 	return logWriter, logCh, cmd
@@ -951,13 +949,6 @@ func listenForLogs(ch <-chan string) tea.Cmd {
 		}
 		return logLineMsg{line: line}
 	}
-}
-
-// spinnerTick returns a command that triggers spinner animation after 80ms.
-func spinnerTick() tea.Cmd {
-	return tea.Tick(80*time.Millisecond, func(t time.Time) tea.Msg {
-		return spinnerTickMsg{}
-	})
 }
 
 // hasTaskOutput returns true if any task has output to display.

@@ -1182,9 +1182,9 @@ func TestFocusMode_TabKeyTogglesFocus(t *testing.T) {
 		newMockTask("task2", task.StatusDone, "", nil),
 	}
 	model := New(tasks)
-	// Set up two-column mode
-	model.width = 100
-	model.height = 40
+	// Set up two-column mode via WindowSizeMsg to populate layout cache
+	m, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	model = m.(Model)
 
 	// Initial focus should be on task list
 	assert.Equal(t, FocusTaskList, model.focusedPanel, "Initial focus should be on TaskList")
@@ -1210,9 +1210,9 @@ func TestFocusMode_JKNavigationTaskList(t *testing.T) {
 		newMockTask("task3", task.StatusDone, "", nil),
 	}
 	model := New(tasks)
-	// Set up two-column mode
-	model.width = 100
-	model.height = 40
+	// Set up two-column mode via WindowSizeMsg to populate layout cache
+	m, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	model = m.(Model)
 	model.focusedPanel = FocusTaskList
 
 	// Initial selectedTask should be 0
@@ -1256,9 +1256,9 @@ func TestFocusMode_ArrowKeyNavigationTaskList(t *testing.T) {
 		newMockTask("task2", task.StatusDone, "", nil),
 	}
 	model := New(tasks)
-	// Set up two-column mode
-	model.width = 100
-	model.height = 40
+	// Set up two-column mode via WindowSizeMsg to populate layout cache
+	m, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	model = m.(Model)
 	model.focusedPanel = FocusTaskList
 
 	// Press down arrow - should move to task 1
@@ -1278,14 +1278,13 @@ func TestFocusMode_JKScrollsLogsWhenFocused(t *testing.T) {
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
 	model := New(tasks)
-	// Set up two-column mode with viewport
-	model.width = 100
-	model.height = 40
+	// Set up two-column mode via WindowSizeMsg to populate layout cache
+	m, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	model = m.(Model)
 	model.focusedPanel = FocusLogs
 
-	// Initialize log viewport with content
-	layout := NewLayout(model.width, model.height)
-	model.logViewport = viewport.New(layout.RightWidth-2, layout.Height-5)
+	// Initialize log viewport using cached layout
+	model.logViewport = viewport.New(model.layout.RightWidth-2, model.layout.Height-5)
 	// Add enough content to make scrolling possible
 	lines := make([]string, 50)
 	for i := range lines {
@@ -1313,14 +1312,13 @@ func TestFocusMode_GKeyJumpsToBottom(t *testing.T) {
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
 	model := New(tasks)
-	// Set up two-column mode with viewport
-	model.width = 100
-	model.height = 40
+	// Set up two-column mode via WindowSizeMsg to populate layout cache
+	m, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	model = m.(Model)
 	model.focusedPanel = FocusLogs
 
-	// Initialize log viewport with content
-	layout := NewLayout(model.width, model.height)
-	model.logViewport = viewport.New(layout.RightWidth-2, layout.Height-5)
+	// Initialize log viewport using cached layout
+	model.logViewport = viewport.New(model.layout.RightWidth-2, model.layout.Height-5)
 	// Add enough content to make scrolling possible
 	lines := make([]string, 50)
 	for i := range lines {
@@ -1340,14 +1338,13 @@ func TestFocusMode_GKeyIgnoredWhenTaskListFocused(t *testing.T) {
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
 	model := New(tasks)
-	// Set up two-column mode with viewport
-	model.width = 100
-	model.height = 40
+	// Set up two-column mode via WindowSizeMsg to populate layout cache
+	m, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	model = m.(Model)
 	model.focusedPanel = FocusTaskList
 
-	// Initialize log viewport with content
-	layout := NewLayout(model.width, model.height)
-	model.logViewport = viewport.New(layout.RightWidth-2, layout.Height-5)
+	// Initialize log viewport using cached layout
+	model.logViewport = viewport.New(model.layout.RightWidth-2, model.layout.Height-5)
 	lines := make([]string, 50)
 	for i := range lines {
 		lines[i] = fmt.Sprintf("log line %d", i)
@@ -1370,9 +1367,9 @@ func TestFocusMode_NavigationBounds(t *testing.T) {
 		newMockTask("task3", task.StatusDone, "", nil),
 	}
 	model := New(tasks)
-	// Set up two-column mode
-	model.width = 100
-	model.height = 40
+	// Set up two-column mode via WindowSizeMsg to populate layout cache
+	m, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	model = m.(Model)
 	model.focusedPanel = FocusTaskList
 
 	// Test lower bound
@@ -1404,9 +1401,10 @@ func TestShowLogs_ToggleWithOKey(t *testing.T) {
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
 	model := New(tasks)
-	// Set up two-column mode
-	model.width = 100
-	model.height = 40
+
+	// Set up two-column mode via WindowSizeMsg to populate layout cache
+	newModel, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	model = newModel.(Model)
 
 	// Initial state should be true
 	assert.True(t, model.showLogs, "showLogs should default to true")
@@ -1430,13 +1428,13 @@ func TestShowLogs_PanelShowsPlaceholderWhenEmpty(t *testing.T) {
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
 	model := New(tasks)
-	// Set up two-column mode
-	model.width = 100
-	model.height = 40
 
-	// Initialize viewport
-	layout := NewLayout(model.width, model.height)
-	model.logViewport = viewport.New(layout.RightWidth-2, layout.Height-5)
+	// Set up two-column mode via WindowSizeMsg to populate layout cache
+	newModel, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	model = newModel.(Model)
+
+	// Initialize viewport using cached layout
+	model.logViewport = viewport.New(model.layout.RightWidth-2, model.layout.Height-5)
 
 	// No logs yet
 	assert.Empty(t, model.coord.CurrentLogs(), "currentLogs should be empty")
@@ -1457,13 +1455,12 @@ func TestShowLogs_DisplaysHistoryWhenStopped(t *testing.T) {
 		newMockTask("task2", task.StatusDone, "", nil),
 	}
 	model := New(tasks)
-	// Set up two-column mode
-	model.width = 100
-	model.height = 40
+	// Set up two-column mode via WindowSizeMsg to populate layout cache
+	m, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	model = m.(Model)
 
-	// Initialize viewport
-	layout := NewLayout(model.width, model.height)
-	model.logViewport = viewport.New(layout.RightWidth-2, layout.Height-5)
+	// Initialize viewport using cached layout
+	model.logViewport = viewport.New(model.layout.RightWidth-2, model.layout.Height-5)
 
 	// Simulate task 1 completion with logs via coordinator
 	_, _ = model.exec.RunNext(context.Background())
@@ -1508,13 +1505,13 @@ func TestShowLogs_AutoscrollStickToBottom(t *testing.T) {
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
 	model := New(tasks)
-	// Set up two-column mode
-	model.width = 100
-	model.height = 40
 
-	// Initialize viewport
-	layout := NewLayout(model.width, model.height)
-	model.logViewport = viewport.New(layout.RightWidth-2, layout.Height-5)
+	// Set up two-column mode via WindowSizeMsg to populate layout cache
+	newModel, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	model = newModel.(Model)
+
+	// Initialize viewport using cached layout
+	model.logViewport = viewport.New(model.layout.RightWidth-2, model.layout.Height-5)
 
 	// Add many log lines to make scrolling possible
 	for i := range 50 {
@@ -1533,7 +1530,7 @@ func TestShowLogs_AutoscrollStickToBottom(t *testing.T) {
 	// Add another log line - should NOT autoscroll (user scrolled up)
 	beforeY := model.logViewport.YOffset
 	msg := logLineMsg{line: "new log line"}
-	newModel, _ := model.Update(msg)
+	newModel, _ = model.Update(msg)
 	model = newModel.(Model)
 
 	// YOffset should remain roughly the same (not scrolled to bottom)
@@ -1678,9 +1675,10 @@ func TestAppContainer_HelpBarInsideContainer(t *testing.T) {
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
 	model := New(tasks)
-	// Set terminal dimensions
-	model.width = 100
-	model.height = 40
+
+	// Set terminal dimensions via WindowSizeMsg to populate layout cache
+	newModel, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	model = newModel.(Model)
 
 	// Execute task to reach completion state
 	_, _ = model.exec.RunNext(context.Background())

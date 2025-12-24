@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mockTask is a test double for Task interface.
 type mockTask struct {
 	result    Result
 	name      string
@@ -141,7 +140,6 @@ func TestNewConditionalTask_RejectsNilEvaluator(t *testing.T) {
 	inner := &mockTask{name: "test", result: Result{Status: StatusDone}}
 	cond := &condition.Condition{OS: []string{"arch"}}
 
-	// Creating with nil evaluator should return an error
 	ct, err := NewConditionalTask(inner, cond, nil)
 
 	assert.Nil(t, ct)

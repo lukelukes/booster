@@ -10,40 +10,21 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// SummaryData contains completion statistics.
 type SummaryData struct {
 	Done    int
 	Skipped int
 	Failed  int
 	Total   int
 	Elapsed time.Duration
-	// Slowest tasks (name -> duration)
+
 	SlowestTasks []TaskTiming
 }
 
-// TaskTiming holds a task name and its execution duration.
 type TaskTiming struct {
 	Name     string
 	Duration time.Duration
 }
 
-// RenderSummary renders the completion summary screen.
-// Example:
-// ┌────────────────────────────────────────────────────┐
-// │              ✓ BOOSTER COMPLETE                    │
-// │                 2m 34s total                       │
-// └────────────────────────────────────────────────────┘
-//
-//	Summary
-//	─────────────────────────────────────────
-//	   12 completed    ████████████████████  80%
-//	    3 skipped      █████░░░░░░░░░░░░░░░  20%
-//	    0 failed       ░░░░░░░░░░░░░░░░░░░░   0%
-//
-//	Slowest Tasks
-//	─────────────────────────────────────────
-//	   45.2s   mise: Install node@22
-//	   23.1s   mise: Install python@3.12
 func RenderSummary(data SummaryData, width int) string {
 	var b strings.Builder
 
@@ -61,7 +42,6 @@ func RenderSummary(data SummaryData, width int) string {
 	return b.String()
 }
 
-// RenderFailedSummary renders summary when there were failures.
 func RenderFailedSummary(data SummaryData, width int) string {
 	var b strings.Builder
 
@@ -97,7 +77,7 @@ func renderHeaderBox(title string, elapsed time.Duration, width int, style lipgl
 	content := fmt.Sprintf("%s\n%s", title, subtitle)
 
 	return style.
-		Width(boxWidth - 4). // Account for border and padding
+		Width(boxWidth - 4).
 		Align(lipgloss.Center).
 		Render(content)
 }
@@ -177,26 +157,21 @@ func renderSlowestTasks(tasks []TaskTiming) string {
 	return b.String()
 }
 
-// formatDuration formats a duration in a human-readable way.
-// Examples: "2m 34s", "45.2s", "1.2s"
 func formatDuration(d time.Duration) string {
 	if d < time.Second {
 		return "0s"
 	}
 
-	// For durations >= 1 minute, show minutes and seconds
 	if d >= time.Minute {
 		minutes := int(d.Minutes())
 		seconds := int(d.Seconds()) % 60
 		return fmt.Sprintf("%dm %ds", minutes, seconds)
 	}
 
-	// For durations < 1 minute, show seconds with one decimal
 	seconds := d.Seconds()
 	if seconds >= 10 {
-		// Show whole seconds for 10s and above
 		return fmt.Sprintf("%ds", int(seconds))
 	}
-	// Show one decimal place for under 10 seconds
+
 	return fmt.Sprintf("%.1fs", seconds)
 }

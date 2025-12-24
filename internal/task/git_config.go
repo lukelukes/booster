@@ -8,30 +8,22 @@ import (
 	"strings"
 )
 
-// Prompter is an interface for prompting users for input.
-// This abstraction enables testability by allowing mock implementations.
 type Prompter interface {
-	// Prompt asks the user for input using the given prompt text.
-	// Returns the user's response or an error if the prompt was cancelled.
 	Prompt(ctx context.Context, promptText string) (string, error)
 }
 
-// GitConfigItem represents a single git configuration key-value pair.
 type GitConfigItem struct {
-	Key    string // Git config key (e.g., "user.name")
-	Value  string // Explicit value (if set, no prompt needed)
-	Prompt string // Prompt text (used if no Value and key doesn't exist)
+	Key    string
+	Value  string
+	Prompt string
 }
 
-// GitConfig sets global git configuration values.
-// It is idempotent: only sets values that don't already exist or have explicit values.
 type GitConfig struct {
 	Runner   cmdexec.Runner
 	Prompter Prompter
 	Items    []GitConfigItem
 }
 
-// Name returns a human-readable description for display.
 func (t *GitConfig) Name() string {
 	if len(t.Items) == 0 {
 		return "configure git: (none)"
@@ -46,18 +38,10 @@ func (t *GitConfig) Name() string {
 	return "configure git: " + strings.Join(keys, ", ")
 }
 
-// NeedsSudo returns false - git config operates on user config files.
 func (t *GitConfig) NeedsSudo() bool {
 	return false
 }
 
-// Run executes the git configuration. It is idempotent.
-// For each item:
-//   - If Value is set explicitly: set it unconditionally
-//   - If Value is empty: check if key exists
-//   - If exists: skip
-//   - If doesn't exist and Prompt is set: prompt user
-//   - If doesn't exist and no Prompt: skip
 func (t *GitConfig) Run(ctx context.Context) Result {
 	if len(t.Items) == 0 {
 		return Result{Status: StatusSkipped, Message: "no items to configure"}
@@ -68,13 +52,10 @@ func (t *GitConfig) Run(ctx context.Context) Result {
 	var allOutput strings.Builder
 
 	for _, item := range t.Items {
-		// Check if key already exists
 		output, err := t.Runner.Run(ctx, "git", "config", "--global", "--get", item.Key)
 		existing := strings.TrimSpace(string(output))
 
-		// If explicit value is provided, always set it (even if it already exists)
 		if item.Value != "" {
-			// Only set if different from existing value
 			if existing == item.Value {
 				skipped = append(skipped, item.Key)
 				continue
@@ -96,14 +77,11 @@ func (t *GitConfig) Run(ctx context.Context) Result {
 			continue
 		}
 
-		// No explicit value provided
-		// If key already exists, skip it (respect user's existing config)
 		if err == nil && existing != "" {
 			skipped = append(skipped, item.Key)
 			continue
 		}
 
-		// Key doesn't exist - prompt if prompt text is provided
 		if item.Prompt != "" {
 			if t.Prompter == nil {
 				return Result{
@@ -120,7 +98,6 @@ func (t *GitConfig) Run(ctx context.Context) Result {
 				}
 			}
 
-			// Set the prompted value
 			setOutput, setErr := t.Runner.Run(ctx, "git", "config", "--global", item.Key, value)
 			if setErr != nil {
 				if allOutput.Len() > 0 {
@@ -135,12 +112,10 @@ func (t *GitConfig) Run(ctx context.Context) Result {
 			}
 			configured = append(configured, item.Key)
 		} else {
-			// No prompt provided and key doesn't exist - skip
 			skipped = append(skipped, item.Key)
 		}
 	}
 
-	// Build result message
 	if len(configured) == 0 {
 		return Result{
 			Status:  StatusSkipped,
@@ -161,16 +136,6 @@ func (t *GitConfig) Run(ctx context.Context) Result {
 	}
 }
 
-// NewGitConfig creates a factory for GitConfig tasks.
-// The factory parses YAML in the following format:
-//
-//	args:
-//	  - key: "user.name"
-//	    prompt: "What is your name for git commits?"
-//	  - key: "user.email"
-//	    prompt: "What is your email for git commits?"
-//	  - key: "init.defaultBranch"
-//	    value: "main"
 func NewGitConfig(runner cmdexec.Runner, prompter Prompter) Factory {
 	return func(args any) ([]Task, error) {
 		items, err := parseGitConfigArgs(args)
@@ -190,7 +155,6 @@ func NewGitConfig(runner cmdexec.Runner, prompter Prompter) Factory {
 	}
 }
 
-// parseGitConfigArgs parses the YAML args into GitConfigItem structs.
 func parseGitConfigArgs(args any) ([]GitConfigItem, error) {
 	list, ok := args.([]any)
 	if !ok {
@@ -204,19 +168,16 @@ func parseGitConfigArgs(args any) ([]GitConfigItem, error) {
 			return nil, fmt.Errorf("arg %d: must be a map with 'key' field", i+1)
 		}
 
-		// Key is required
 		key, ok := m["key"].(string)
 		if !ok || key == "" {
 			return nil, fmt.Errorf("arg %d: 'key' is required and must be a string", i+1)
 		}
 
-		// Value is optional
 		value := ""
 		if v, ok := m["value"].(string); ok {
 			value = v
 		}
 
-		// Prompt is optional
 		prompt := ""
 		if p, ok := m["prompt"].(string); ok {
 			prompt = p

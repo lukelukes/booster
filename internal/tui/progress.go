@@ -7,49 +7,19 @@ import (
 	"time"
 )
 
-// ProgressOptions holds optional parameters for progress rendering.
 type ProgressOptions struct {
-	// RunningTaskName is the name of the currently running task (optional)
 	RunningTaskName string
-	// AvgTaskDuration is the average duration per task for ETA calculation (optional)
+
 	AvgTaskDuration time.Duration
 }
 
-// RenderProgress renders a progress bar with stats.
-// Example output:
-// "3 of 12 tasks  •  25%  •  1m23s"
-// "████████░░░░░░░░░░░░░░░░░░░░░░░░"
-//
-// Parameters:
-//   - current: number of completed items
-//   - total: total number of items
-//   - elapsed: time elapsed since start
-//   - width: available width for the entire component (including text and bar)
-//
-// Returns a multi-line string with stats on first line and progress bar on second.
 func RenderProgress(current, total int, elapsed time.Duration, width int) string {
 	return RenderProgressWithOptions(current, total, elapsed, width, ProgressOptions{})
 }
 
-// RenderProgressWithOptions renders a progress bar with stats and optional features.
-// Example output formats:
-// - Basic: "3 of 12 tasks  •  25%  •  1m23s"
-// - With ETA: "5 of 10 tasks  •  ~4m remaining  •  1m23s"
-// - With running task: "5 of 10 tasks  •  Installing node@22  •  ~2m remaining  •  1m23s"
-// - Complete: "10 of 10 tasks  •  Complete  •  2m34s"
-// "████████░░░░░░░░░░░░░░░░░░░░░░░░"
-//
-// Parameters:
-//   - current: number of completed items
-//   - total: total number of items
-//   - elapsed: time elapsed since start
-//   - width: available width for the entire component (including text and bar)
-//   - opts: optional parameters for progress rendering
-//
-// Returns a multi-line string with stats on first line and progress bar on second.
 func RenderProgressWithOptions(current, total int, elapsed time.Duration, width int, opts ProgressOptions) string {
 	if total <= 0 {
-		total = 1 // Prevent division by zero
+		total = 1
 	}
 	if current > total {
 		current = total
@@ -108,14 +78,11 @@ func RenderProgressWithOptions(current, total int, elapsed time.Duration, width 
 	return styledStats + "\n" + styledBar
 }
 
-// formatElapsedCompact formats a duration into a compact human-readable string.
-// Examples: "45s", "1m23s", "2h3m"
 func formatElapsedCompact(d time.Duration) string {
 	if d < 0 {
 		d = 0
 	}
 
-	// Round to seconds
 	seconds := int(d.Seconds())
 
 	hours := seconds / 3600

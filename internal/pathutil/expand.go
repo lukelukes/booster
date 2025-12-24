@@ -1,4 +1,3 @@
-// Package pathutil provides path manipulation utilities.
 package pathutil
 
 import (
@@ -7,7 +6,6 @@ import (
 	"strings"
 )
 
-// Expand expands ~ to the user's home directory.
 func Expand(path string) string {
 	if strings.HasPrefix(path, "~/") {
 		home, err := os.UserHomeDir()

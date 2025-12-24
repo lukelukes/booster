@@ -10,8 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// --- PkgInstall Task Tests ---
-
 func TestPkgInstall_SkipsWhenAllInstalled(t *testing.T) {
 	manager := newMockManager("paru", false)
 	manager.installed["git"] = true
@@ -32,7 +30,7 @@ func TestPkgInstall_SkipsWhenAllInstalled(t *testing.T) {
 
 func TestPkgInstall_InstallsMissingPackages(t *testing.T) {
 	manager := newMockManager("paru", false)
-	manager.installed["git"] = true // git already installed
+	manager.installed["git"] = true
 
 	task := &PkgInstall{
 		Packages: []string{"git", "curl", "ripgrep"},
@@ -43,7 +41,7 @@ func TestPkgInstall_InstallsMissingPackages(t *testing.T) {
 	result := task.Run(context.Background())
 
 	assert.Equal(t, StatusDone, result.Status)
-	// New format: "3 pkgs (1 existed, 2 installed)"
+
 	assert.Contains(t, result.Message, "3 pkgs")
 	assert.Contains(t, result.Message, "1 existed")
 	assert.Contains(t, result.Message, "2 installed")
@@ -107,7 +105,7 @@ func TestPkgInstall_WarnsOnCasksWithNonDarwin(t *testing.T) {
 		Packages: []string{"git"},
 		Casks:    []string{"firefox"},
 		Manager:  manager,
-		OS:       "arch", // Not darwin
+		OS:       "arch",
 	}
 
 	result := task.Run(context.Background())
@@ -130,7 +128,7 @@ func TestPkgInstall_InstallsCasksOnDarwin(t *testing.T) {
 	result := task.Run(context.Background())
 
 	assert.Equal(t, StatusDone, result.Status)
-	// New format: "1 pkg installed | 2 casks installed"
+
 	assert.Contains(t, result.Message, "1 pkg")
 	assert.Contains(t, result.Message, "2 casks")
 	require.Len(t, manager.caskCalls, 1)
@@ -165,19 +163,15 @@ func TestPkgInstall_Idempotency(t *testing.T) {
 		OS:       "arch",
 	}
 
-	// First run: installs
 	result1 := task.Run(context.Background())
 	assert.Equal(t, StatusDone, result1.Status)
 
-	// Second run: skips (packages now "installed" in mock)
 	result2 := task.Run(context.Background())
 	assert.Equal(t, StatusSkipped, result2.Status)
 
-	// Third run: still skips
 	result3 := task.Run(context.Background())
 	assert.Equal(t, StatusSkipped, result3.Status)
 
-	// Should have only called install once
 	assert.Len(t, manager.installCalls, 1)
 }
 
@@ -227,12 +221,11 @@ func TestPkgInstall_Name(t *testing.T) {
 }
 
 func TestPkgInstall_Name_BoundaryConditions(t *testing.T) {
-	// Tests CONDITIONALS_BOUNDARY mutations: <= 3 vs < 3 or <= 2
 	tests := []struct {
 		name         string
 		packages     []string
 		casks        []string
-		expectInline bool // true = names inline, false = count
+		expectInline bool
 	}{
 		{
 			name:         "exactly 3 packages - should be inline",
@@ -264,7 +257,6 @@ func TestPkgInstall_Name_BoundaryConditions(t *testing.T) {
 			name := task.Name()
 
 			if tt.expectInline {
-				// Should contain actual package/cask names
 				if len(tt.packages) == 3 {
 					assert.Contains(t, name, "git")
 					assert.Contains(t, name, "curl")
@@ -276,7 +268,6 @@ func TestPkgInstall_Name_BoundaryConditions(t *testing.T) {
 					assert.NotContains(t, name, "3 casks")
 				}
 			} else {
-				// Should contain count
 				if len(tt.packages) > 3 {
 					assert.Contains(t, name, "4 packages")
 				}
@@ -348,8 +339,6 @@ func TestFormatInstallStats(t *testing.T) {
 	}
 }
 
-// --- PacmanManager Tests ---
-
 func TestPacmanManager_ListInstalled(t *testing.T) {
 	mock := &cmdexec.MockRunner{
 		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -408,7 +397,6 @@ func TestPacmanManager_Install(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ok", output)
 
-	// Verify paru was called with correct args
 	require.Len(t, mock.Calls, 1)
 	call := mock.Calls[0]
 	assert.Equal(t, "paru", call.Name)
@@ -457,7 +445,6 @@ func TestPacmanManager_Name(t *testing.T) {
 }
 
 func TestPacmanManager_Install_DefaultsToParuWhenHelperEmpty(t *testing.T) {
-	// Tests: if helper == "" - verify empty helper defaults to paru
 	mock := &cmdexec.MockRunner{
 		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			return []byte("ok"), nil
@@ -465,13 +452,13 @@ func TestPacmanManager_Install_DefaultsToParuWhenHelperEmpty(t *testing.T) {
 	}
 
 	manager := NewPacmanManager(mock)
-	manager.Helper = "" // Explicitly set to empty
+	manager.Helper = ""
 
 	_, err := manager.Install(context.Background(), []string{"git"})
 
 	require.NoError(t, err)
 	require.Len(t, mock.Calls, 1)
-	// Should use "paru" as default when Helper is empty
+
 	assert.Equal(t, "paru", mock.Calls[0].Name,
 		"should default to paru when Helper is empty")
 }
@@ -491,10 +478,7 @@ func TestPacmanManager_Install_EmptyList(t *testing.T) {
 	assert.Empty(t, mock.Calls, "should not call paru for empty list")
 }
 
-// --- Factory Tests ---
-
 func TestNewPkgInstallFactory_SimpleFormat(t *testing.T) {
-	// Simple format: list of package names
 	args := []any{"git", "curl", "ripgrep"}
 	manager := newMockManager("paru", false)
 
@@ -508,7 +492,6 @@ func TestNewPkgInstallFactory_SimpleFormat(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 
-	// Test through observable behavior (Name()) rather than type casting
 	name := tasks[0].Name()
 	assert.Contains(t, name, "git")
 	assert.Contains(t, name, "curl")
@@ -517,7 +500,6 @@ func TestNewPkgInstallFactory_SimpleFormat(t *testing.T) {
 }
 
 func TestNewPkgInstallFactory_StructuredFormat(t *testing.T) {
-	// Structured format: packages and casks in maps
 	args := []any{
 		map[string]any{
 			"packages": []any{"git", "curl"},
@@ -538,7 +520,6 @@ func TestNewPkgInstallFactory_StructuredFormat(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 
-	// Test through observable behavior (Name()) rather than type casting
 	name := tasks[0].Name()
 	assert.Contains(t, name, "git")
 	assert.Contains(t, name, "curl")
@@ -548,7 +529,6 @@ func TestNewPkgInstallFactory_StructuredFormat(t *testing.T) {
 }
 
 func TestNewPkgInstallFactory_MixedFormat(t *testing.T) {
-	// Mixed: both packages and casks in same map
 	args := []any{
 		map[string]any{
 			"packages": []any{"git"},
@@ -567,7 +547,6 @@ func TestNewPkgInstallFactory_MixedFormat(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 
-	// Test through observable behavior (Name()) rather than type casting
 	name := tasks[0].Name()
 	assert.Contains(t, name, "git")
 	assert.Contains(t, name, "casks")
@@ -595,7 +574,7 @@ func TestNewPkgInstallFactory_InvalidArgs_NotList(t *testing.T) {
 }
 
 func TestNewPkgInstallFactory_InvalidArgs_BadType(t *testing.T) {
-	args := []any{123} // number instead of string/map
+	args := []any{123}
 
 	factory := NewPkgInstallFactory(PkgInstallConfig{OS: "arch"})
 	_, err := factory(args)
@@ -607,7 +586,7 @@ func TestNewPkgInstallFactory_InvalidArgs_BadType(t *testing.T) {
 func TestNewPkgInstallFactory_InvalidArgs_PackagesNotList(t *testing.T) {
 	args := []any{
 		map[string]any{
-			"packages": "git", // should be list
+			"packages": "git",
 		},
 	}
 
@@ -621,7 +600,7 @@ func TestNewPkgInstallFactory_InvalidArgs_PackagesNotList(t *testing.T) {
 func TestNewPkgInstallFactory_InvalidArgs_CaskNotString(t *testing.T) {
 	args := []any{
 		map[string]any{
-			"casks": []any{123}, // should be string
+			"casks": []any{123},
 		},
 	}
 
@@ -633,7 +612,6 @@ func TestNewPkgInstallFactory_InvalidArgs_CaskNotString(t *testing.T) {
 }
 
 func TestNewPkgInstallFactory_ErrorIndices(t *testing.T) {
-	// Tests ARITHMETIC_BASE mutations: i+1 vs i-1 in error messages
 	tests := []struct {
 		name          string
 		args          []any

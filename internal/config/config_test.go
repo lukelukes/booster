@@ -127,7 +127,6 @@ tasks:
 }
 
 func TestLoad_FileNotFound(t *testing.T) {
-	// Use TempDir to guarantee the path doesn't exist
 	dir := t.TempDir()
 	nonexistentPath := filepath.Join(dir, "definitely-does-not-exist.yaml")
 

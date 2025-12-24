@@ -15,7 +15,6 @@ func TestTemplateRender_RendersTemplate(t *testing.T) {
 	source := filepath.Join(dir, "config.tmpl")
 	target := filepath.Join(dir, "config")
 
-	// Create template file
 	require.NoError(t, os.WriteFile(source, []byte("Hello {{.Vars.Name}}!"), 0o644))
 
 	task := &TemplateRender{
@@ -30,7 +29,6 @@ func TestTemplateRender_RendersTemplate(t *testing.T) {
 	assert.Equal(t, StatusDone, result.Status)
 	assert.Equal(t, "rendered", result.Message)
 
-	// Verify output
 	content, err := os.ReadFile(target)
 	require.NoError(t, err)
 	assert.Equal(t, "Hello World!", string(content))
@@ -41,7 +39,6 @@ func TestTemplateRender_SkipsWhenUpToDate(t *testing.T) {
 	source := filepath.Join(dir, "config.tmpl")
 	target := filepath.Join(dir, "config")
 
-	// Create template and pre-existing output
 	require.NoError(t, os.WriteFile(source, []byte("Hello {{.Vars.Name}}!"), 0o644))
 	require.NoError(t, os.WriteFile(target, []byte("Hello World!"), 0o644))
 
@@ -63,7 +60,6 @@ func TestTemplateRender_UpdatesWhenChanged(t *testing.T) {
 	source := filepath.Join(dir, "config.tmpl")
 	target := filepath.Join(dir, "config")
 
-	// Create template and pre-existing output with OLD content
 	require.NoError(t, os.WriteFile(source, []byte("Hello {{.Vars.Name}}!"), 0o644))
 	require.NoError(t, os.WriteFile(target, []byte("Hello OldValue!"), 0o644))
 
@@ -78,7 +74,6 @@ func TestTemplateRender_UpdatesWhenChanged(t *testing.T) {
 
 	assert.Equal(t, StatusDone, result.Status)
 
-	// Verify updated content
 	content, err := os.ReadFile(target)
 	require.NoError(t, err)
 	assert.Equal(t, "Hello NewValue!", string(content))
@@ -102,7 +97,6 @@ func TestTemplateRender_CreatesParentDirectories(t *testing.T) {
 
 	assert.Equal(t, StatusDone, result.Status)
 
-	// Verify file was created in nested directory
 	content, err := os.ReadFile(target)
 	require.NoError(t, err)
 	assert.Equal(t, "content: test", string(content))
@@ -113,7 +107,6 @@ func TestTemplateRender_FailsOnInvalidTemplate(t *testing.T) {
 	source := filepath.Join(dir, "config.tmpl")
 	target := filepath.Join(dir, "config")
 
-	// Invalid template syntax
 	require.NoError(t, os.WriteFile(source, []byte("{{.Vars.Name"), 0o644))
 
 	task := &TemplateRender{
@@ -160,15 +153,12 @@ func TestTemplateRender_Idempotency(t *testing.T) {
 		},
 	}
 
-	// First run: creates
 	result1 := task.Run(context.Background())
 	assert.Equal(t, StatusDone, result1.Status)
 
-	// Second run: skips
 	result2 := task.Run(context.Background())
 	assert.Equal(t, StatusSkipped, result2.Status)
 
-	// Third run: still skips
 	result3 := task.Run(context.Background())
 	assert.Equal(t, StatusSkipped, result3.Status)
 }
@@ -224,18 +214,15 @@ func TestTemplateRender_MissingVariable(t *testing.T) {
 	source := filepath.Join(dir, "config.tmpl")
 	target := filepath.Join(dir, "config")
 
-	// Template uses undefined variable
 	require.NoError(t, os.WriteFile(source, []byte("Hello {{.Vars.Undefined}}!"), 0o644))
 
 	task := &TemplateRender{
 		Source:  source,
 		Target:  target,
-		Context: TemplateContext{Vars: map[string]string{}}, // No variables provided
+		Context: TemplateContext{Vars: map[string]string{}},
 	}
 	result := task.Run(context.Background())
 
-	// Go templates render missing map keys as "<no value>" by default
-	// This helps users see when a variable is missing
 	assert.Equal(t, StatusDone, result.Status)
 
 	content, err := os.ReadFile(target)
@@ -345,7 +332,6 @@ func TestNewTemplateRenderFactory_InvalidArgs(t *testing.T) {
 }
 
 func TestNewTemplateRenderFactory_ErrorIndices(t *testing.T) {
-	// Tests ARITHMETIC_BASE mutations: i+1 vs i-1 in error messages
 	cfg := TemplateRenderConfig{Vars: map[string]string{}}
 	factory := NewTemplateRenderFactory(cfg)
 
@@ -365,7 +351,7 @@ func TestNewTemplateRenderFactory_ErrorIndices(t *testing.T) {
 			name: "second arg missing source shows arg 2",
 			args: []any{
 				map[string]any{"source": "a.tmpl", "target": "a"},
-				map[string]any{"target": "b"}, // missing source
+				map[string]any{"target": "b"},
 			},
 			expectedIndex: "arg 2:",
 		},
@@ -395,7 +381,6 @@ func TestTemplateRender_SystemOS(t *testing.T) {
 	source := filepath.Join(dir, "config.tmpl")
 	target := filepath.Join(dir, "config")
 
-	// Template using System.OS
 	require.NoError(t, os.WriteFile(source, []byte("OS: {{.System.OS}}"), 0o644))
 
 	task := &TemplateRender{
@@ -419,7 +404,6 @@ func TestTemplateRender_SystemProfile(t *testing.T) {
 	source := filepath.Join(dir, "config.tmpl")
 	target := filepath.Join(dir, "config")
 
-	// Template using System.Profile
 	require.NoError(t, os.WriteFile(source, []byte("Profile: {{.System.Profile}}"), 0o644))
 
 	task := &TemplateRender{
@@ -443,7 +427,6 @@ func TestTemplateRender_CombinesVarsAndSystem(t *testing.T) {
 	source := filepath.Join(dir, "config.tmpl")
 	target := filepath.Join(dir, "config")
 
-	// Template using both Vars and System
 	tmpl := `# Generated for {{.System.OS}} ({{.System.Profile}})
 user = {{.Vars.Username}}
 email = {{.Vars.Email}}`

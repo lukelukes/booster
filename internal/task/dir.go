@@ -8,7 +8,6 @@ import (
 	"os"
 )
 
-// DirCreate creates a directory if it doesn't exist.
 type DirCreate struct {
 	Path string
 }
@@ -17,7 +16,6 @@ func (t *DirCreate) Name() string {
 	return "create " + t.Path
 }
 
-// NeedsSudo returns false - directory creation in user space doesn't need sudo.
 func (t *DirCreate) NeedsSudo() bool {
 	return false
 }
@@ -25,7 +23,6 @@ func (t *DirCreate) NeedsSudo() bool {
 func (t *DirCreate) Run(ctx context.Context) Result {
 	expanded := pathutil.Expand(t.Path)
 
-	// Check if already exists (idempotency)
 	info, err := os.Stat(expanded)
 	if err == nil {
 		if info.IsDir() {
@@ -37,7 +34,6 @@ func (t *DirCreate) Run(ctx context.Context) Result {
 		}
 	}
 
-	// Create directory
 	if err := os.MkdirAll(expanded, 0o755); err != nil {
 		return Result{Status: StatusFailed, Error: err}
 	}
@@ -45,7 +41,6 @@ func (t *DirCreate) Run(ctx context.Context) Result {
 	return Result{Status: StatusDone, Message: "created"}
 }
 
-// NewDirCreate parses args and creates DirCreate tasks.
 func NewDirCreate(args any) ([]Task, error) {
 	paths, ok := args.([]any)
 	if !ok {

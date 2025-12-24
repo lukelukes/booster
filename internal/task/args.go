@@ -5,14 +5,11 @@ import (
 	"fmt"
 )
 
-// SourceTarget represents a parsed source/target argument pair.
 type SourceTarget struct {
 	Source string
 	Target string
 }
 
-// parseSourceTargetArgs parses a list of {source, target} maps from raw args.
-// Returns a slice of SourceTarget structs or an error with 1-indexed positions.
 func parseSourceTargetArgs(args any) ([]SourceTarget, error) {
 	items, ok := args.([]any)
 	if !ok {

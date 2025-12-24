@@ -10,8 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// --- parseToolSpec Tests ---
-
 func TestParseToolSpec_Valid(t *testing.T) {
 	tests := []struct {
 		input   string
@@ -59,8 +57,6 @@ func TestParseToolSpec_Invalid(t *testing.T) {
 		})
 	}
 }
-
-// --- MiseUse.Name() Tests ---
 
 func TestMiseUse_Name(t *testing.T) {
 	tests := []struct {
@@ -116,7 +112,6 @@ func TestMiseUse_Name(t *testing.T) {
 }
 
 func TestMiseUse_Name_BoundaryConditions(t *testing.T) {
-	// Tests boundary at exactly 3 tools (inline) vs 4+ tools (count)
 	tests := []struct {
 		name         string
 		toolCount    int
@@ -146,12 +141,9 @@ func TestMiseUse_Name_BoundaryConditions(t *testing.T) {
 	}
 }
 
-// --- MiseUse.Run() Tests ---
-
 func TestMiseUse_SkipsWhenAllAtCorrectVersion(t *testing.T) {
 	mock := &cmdexec.MockRunner{
 		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
-			// mise current <tool> returns current version
 			if name == "mise" && len(args) >= 2 && args[0] == "current" {
 				switch args[1] {
 				case "go":
@@ -191,11 +183,11 @@ func TestMiseUse_InstallsMissingTools(t *testing.T) {
 				if len(args) >= 2 && args[0] == "current" {
 					switch args[1] {
 					case "go":
-						return []byte("1.22.0\n"), nil // already correct
+						return []byte("1.22.0\n"), nil
 					case "node":
-						return []byte("18.0.0\n"), nil // wrong version
+						return []byte("18.0.0\n"), nil
 					case "rust":
-						return nil, errors.New("not installed") // not installed
+						return nil, errors.New("not installed")
 					}
 				}
 				if len(args) >= 3 && args[0] == "use" && args[1] == "--global" {
@@ -215,9 +207,9 @@ func TestMiseUse_InstallsMissingTools(t *testing.T) {
 	task := &MiseUse{
 		Runner: mock,
 		Tools: []ToolSpec{
-			{Name: "go", Version: "1.22.0"},    // already correct
-			{Name: "node", Version: "20.10.0"}, // needs update
-			{Name: "rust", Version: "1.75.0"},  // needs install
+			{Name: "go", Version: "1.22.0"},
+			{Name: "node", Version: "20.10.0"},
+			{Name: "rust", Version: "1.75.0"},
 		},
 	}
 
@@ -330,9 +322,9 @@ func TestMiseUse_Idempotency(t *testing.T) {
 				}
 				if len(args) >= 3 && args[0] == "use" {
 					callCount++
-					// Simulate installation by updating current version
+
 					spec := args[2]
-					// Parse "go@1.22.0" -> currentVersions["go"] = "1.22.0"
+
 					for i := 0; i < len(spec); i++ {
 						if spec[i] == '@' {
 							currentVersions[spec[:i]] = spec[i+1:]
@@ -357,19 +349,15 @@ func TestMiseUse_Idempotency(t *testing.T) {
 		Tools:  []ToolSpec{{Name: "go", Version: "1.22.0"}},
 	}
 
-	// First run: installs
 	result1 := task.Run(context.Background())
 	assert.Equal(t, StatusDone, result1.Status)
 
-	// Second run: skips (tool now at correct version)
 	result2 := task.Run(context.Background())
 	assert.Equal(t, StatusSkipped, result2.Status)
 
-	// Third run: still skips
 	result3 := task.Run(context.Background())
 	assert.Equal(t, StatusSkipped, result3.Status)
 
-	// Should have only called mise use once
 	assert.Equal(t, 1, callCount, "should only install once")
 }
 
@@ -394,8 +382,6 @@ func TestMiseUse_EmptyToolList(t *testing.T) {
 	assert.Contains(t, result.Message, "all tools at correct versions")
 }
 
-// --- MiseUseFactory Tests ---
-
 func TestMiseUseFactory_ValidArgs(t *testing.T) {
 	args := []any{"go@1.22.0", "node@20.10.0", "rust@1.75.0"}
 
@@ -405,7 +391,6 @@ func TestMiseUseFactory_ValidArgs(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 
-	// Verify through Name()
 	name := tasks[0].Name()
 	assert.Contains(t, name, "go@1.22.0")
 	assert.Contains(t, name, "node@20.10.0")
@@ -443,7 +428,7 @@ func TestMiseUseFactory_InvalidArgs_NotString(t *testing.T) {
 }
 
 func TestMiseUseFactory_InvalidArgs_BadToolSpec(t *testing.T) {
-	args := []any{"go"} // missing version
+	args := []any{"go"}
 
 	factory := NewMiseUseFactory(MiseUseConfig{})
 	_, err := factory(args)
@@ -501,7 +486,6 @@ func TestMiseUseFactory_UsesProvidedRunner(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 
-	// Run to verify it uses the mock runner
 	result := tasks[0].Run(context.Background())
 	assert.Equal(t, StatusFailed, result.Status)
 	assert.Contains(t, result.Error.Error(), "mise not found")

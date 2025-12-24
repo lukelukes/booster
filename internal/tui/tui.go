@@ -1,7 +1,7 @@
-// Package tui provides the terminal user interface for booster.
 package tui
 
 import (
+	"booster/internal/coordinator"
 	"booster/internal/executor"
 	"booster/internal/logstream"
 	"booster/internal/task"
@@ -16,14 +16,12 @@ import (
 )
 
 const (
-	maxLogLines      = 8  // Number of log lines to display
-	outputViewHeight = 15 // Height of output viewport in lines
+	maxLogLines      = 8
+	outputViewHeight = 15
 )
 
-// Spinner frames - Braille dots spinner for professional look
 var spinnerFrames = []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"}
 
-// FocusPanel represents which panel has focus in two-column mode.
 type FocusPanel int
 
 const (
@@ -31,97 +29,76 @@ const (
 	FocusLogs
 )
 
-// Model is the Bubble Tea model for the TUI.
 type Model struct {
-	exec       *executor.Executor
-	showOutput bool // Toggle to show command output
-	showLogs   bool // Toggle to show logs panel (default: true)
-	width      int  // Terminal width (tracked for resize handling)
-	height     int  // Terminal height (tracked for resize handling)
+	exec  *executor.Executor
+	coord *coordinator.Coordinator
 
-	// Scrollable output viewport
+	showOutput bool
+	showLogs   bool
+	width      int
+	height     int
+
 	outputViewport viewport.Model
 
-	// Scrollable log viewport for two-column mode
 	logViewport viewport.Model
 
-	// Scrollable task list viewport for two-column mode
 	taskViewport viewport.Model
 
-	// Streaming log support - log history per task
-	logHistory   map[int][]string         // task index -> log lines (persisted)
-	currentLogs  []string                 // accumulator for running task
-	logCh        <-chan string            // Channel to receive log lines
-	logWriter    *logstream.ChannelWriter // Writer to close when task completes
-	selectedTask int                      // highlighted task index
-	focusedPanel FocusPanel               // which panel has focus (TaskList or Logs)
+	logCh        <-chan string
+	logWriter    *logstream.ChannelWriter
+	selectedTask int
+	focusedPanel FocusPanel
 
-	// Coordination state for log/task completion race condition fix
-	pendingResult *task.Result // holds task result if arrived before logs finished
-	logsDone      bool         // true when logDoneMsg received for current task
-
-	// Spinner animation state
-	spinnerFrame int // Current spinner animation frame (0-7)
+	spinnerFrame int
 }
 
-// New creates a new TUI model with the given tasks.
 func New(tasks []task.Task) Model {
 	return Model{
 		exec:         executor.New(tasks),
-		showLogs:     true, // Logs panel visible by default
-		logHistory:   make(map[int][]string),
-		currentLogs:  []string{},
+		coord:        coordinator.New(),
+		showLogs:     true,
 		selectedTask: 0,
 		focusedPanel: FocusTaskList,
 	}
 }
 
-// Init starts the first task.
 func (m Model) Init() tea.Cmd {
 	if m.exec.Done() {
 		return nil
 	}
-	// Use a message to trigger task start so state merges properly in Update
+
 	return func() tea.Msg {
 		return startTaskMsg{}
 	}
 }
 
-// startTaskMsg signals that a task should be started.
 type startTaskMsg struct{}
 
-// taskDoneMsg signals a task completed.
 type taskDoneMsg struct {
 	result task.Result
 }
 
-// logLineMsg delivers a log line from the running task.
 type logLineMsg struct {
 	line string
 }
 
-// logDoneMsg signals no more log lines (channel closed).
 type logDoneMsg struct{}
 
-// spinnerTickMsg triggers spinner animation frame update.
 type spinnerTickMsg struct{}
 
-// Update handles messages.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.MouseMsg:
-		// Handle mouse interactions in two-column mode
+
 		if m.isTwoColumn() && m.showLogs {
-			// Calculate layout to determine panel boundaries
 			contentWidth, contentHeight := m.contentDimensions()
 			layout := NewLayout(contentWidth, contentHeight)
 
-			// Account for app container border (2 chars on left)
 			clickX := msg.X - 2
 
 			switch msg.Button {
 			case tea.MouseButtonLeft:
-				// Focus panel based on click position
+
 				if clickX < layout.LeftWidth {
 					m.focusedPanel = FocusTaskList
 				} else {
@@ -130,7 +107,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case tea.MouseButtonWheelUp:
-				// Scroll the panel under the mouse cursor
+
 				if clickX < layout.LeftWidth {
 					m.taskViewport.ScrollUp(3)
 				} else {
@@ -149,16 +126,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
-		// In two-column mode, handle focus-based navigation (both running and stopped)
+
 		if m.isTwoColumn() {
 			switch msg.String() {
 			case "o":
-				// Toggle logs panel visibility
+
 				m.showLogs = !m.showLogs
 				return m, nil
 
 			case "tab":
-				// Toggle focus between panels
+
 				if m.focusedPanel == FocusTaskList {
 					m.focusedPanel = FocusLogs
 				} else {
@@ -168,34 +145,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case "j", "down":
 				if m.focusedPanel == FocusTaskList {
-					// Navigate to next task
 					if m.selectedTask < m.exec.Total()-1 {
 						m.selectedTask++
 						m.ensureTaskVisible()
 					}
-					// Update log viewport with selected task's history when stopped
+
 					if m.exec.Stopped() {
 						m.updateLogViewportForSelectedTask()
 					}
 				} else {
-					// Scroll logs down
 					m.logViewport.ScrollDown(1)
 				}
 				return m, nil
 
 			case "k", "up":
 				if m.focusedPanel == FocusTaskList {
-					// Navigate to previous task
 					if m.selectedTask > 0 {
 						m.selectedTask--
 						m.ensureTaskVisible()
 					}
-					// Update log viewport with selected task's history when stopped
+
 					if m.exec.Stopped() {
 						m.updateLogViewportForSelectedTask()
 					}
 				} else {
-					// Scroll logs up
 					m.logViewport.ScrollUp(1)
 				}
 				return m, nil
@@ -228,13 +201,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.exec.Stopped() {
 				m.showOutput = !m.showOutput
 				if m.showOutput {
-					// Initialize viewport with output content
 					m.outputViewport = m.createOutputViewport()
 				}
 				return m, nil
 			}
 		default:
-			// Delegate scroll keys to viewport when output is shown
+
 			if m.showOutput && m.exec.Stopped() {
 				var cmd tea.Cmd
 				m.outputViewport, cmd = m.outputViewport.Update(msg)
@@ -243,34 +215,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case startTaskMsg:
-		// startTask returns state that we merge into model here
-		// This is the proper BubbleTea pattern for value-based models
+
 		logWriter, logCh, cmd := m.startTask()
 		m.logWriter = logWriter
 		m.logCh = logCh
 
-		// Reset coordination state for new task
-		m.logsDone = false
-		m.pendingResult = nil
+		m.coord.StartTask(m.exec.Current())
 
-		// Initialize viewports if in two-column mode
 		if m.isTwoColumnRunning() {
 			contentWidth, contentHeight := m.contentDimensions()
 			layout := NewLayout(contentWidth, contentHeight)
 
-			// Log viewport
 			m.logViewport = viewport.New(
-				layout.RightWidth-2, // Panel border takes 2 chars (left + right)
-				layout.Height-5,     // Panel border (2) + title (1) + help bar (2)
+				layout.RightWidth-2,
+				layout.Height-5,
 			)
 			m.logViewport.SetContent("")
 
-			// Task list viewport - height excludes progress bar (2 lines + blank)
 			taskViewportHeight := max(
-				// border(2) + title(1) + progress(2) + blank(1) + help(2)
+
 				layout.Height-8, 3)
 			m.taskViewport = viewport.New(
-				layout.LeftWidth-4, // Panel border(2) + padding(2)
+				layout.LeftWidth-4,
 				taskViewportHeight,
 			)
 		}
@@ -278,24 +244,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case spinnerTickMsg:
-		// Increment spinner frame
+
 		m.spinnerFrame = (m.spinnerFrame + 1) % len(spinnerFrames)
 
-		// Continue spinner animation if still running
 		if !m.exec.Stopped() {
 			return m, spinnerTick()
 		}
 		return m, nil
 
 	case logLineMsg:
-		// Append log line to current task's accumulator
-		m.currentLogs = append(m.currentLogs, msg.line)
 
-		// Update log viewport content for two-column mode
+		m.coord.AddLogLine(msg.line)
+
 		if m.isTwoColumnRunning() {
-			// Only auto-scroll if viewport was at bottom (stick to bottom pattern)
 			wasAtBottom := m.logViewport.AtBottom()
-			m.logViewport.SetContent(strings.Join(m.currentLogs, "\n"))
+			m.logViewport.SetContent(strings.Join(m.coord.CurrentLogs(), "\n"))
 			if wasAtBottom {
 				m.logViewport.GotoBottom()
 			}
@@ -304,24 +267,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, listenForLogs(m.logCh)
 
 	case logDoneMsg:
-		// Log channel closed - all logs for current task have been received
-		m.logsDone = true
 
-		// If we have a pending task result (taskDoneMsg arrived first), process it now
-		if m.pendingResult != nil {
-			return m.completeTask(*m.pendingResult)
+		if completeMsg := m.coord.LogsDone(); completeMsg != nil {
+			return m.completeTask(completeMsg.Result)
 		}
 		return m, nil
 
 	case taskDoneMsg:
-		// If logs are still streaming, defer processing until logDoneMsg arrives
-		if !m.logsDone {
-			m.pendingResult = &msg.result
-			return m, nil
+		// Delegate to coordinator - returns completion msg if logs already done
+		if completeMsg := m.coord.TaskDone(msg.result); completeMsg != nil {
+			return m.completeTask(completeMsg.Result)
 		}
-
-		// Logs already done, process immediately
-		return m.completeTask(msg.result)
+		return m, nil
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -481,12 +438,13 @@ func (m Model) renderSingleColumn() string {
 	}
 
 	// Show streaming logs while task is running
-	if !stopped && len(m.currentLogs) > 0 {
+	currentLogs := m.coord.CurrentLogs()
+	if !stopped && len(currentLogs) > 0 {
 		s.WriteString("\n")
 		s.WriteString(logHeaderStyle.Render("─── logs ───"))
 		s.WriteString("\n")
 		// Display only the last maxLogLines to keep view manageable
-		displayLogs := m.currentLogs
+		displayLogs := currentLogs
 		if len(displayLogs) > maxLogLines {
 			displayLogs = displayLogs[len(displayLogs)-maxLogLines:]
 		}
@@ -807,14 +765,11 @@ func (m Model) isTwoColumn() bool {
 // When stopped: shows historical logs for selected task
 func (m Model) getDisplayLogs() []string {
 	if m.exec.Stopped() {
-		// Show historical logs for selected task
-		if logs, ok := m.logHistory[m.selectedTask]; ok {
-			return logs
-		}
-		return nil
+		// Show historical logs for selected task (from coordinator)
+		return m.coord.LogsFor(m.selectedTask)
 	}
-	// Show current logs during execution
-	return m.currentLogs
+	// Show current logs during execution (from coordinator)
+	return m.coord.CurrentLogs()
 }
 
 // updateLogViewportForSelectedTask updates the log viewport content
@@ -942,18 +897,8 @@ func (m Model) startTask() (*logstream.ChannelWriter, <-chan string, tea.Cmd) {
 // completeTask handles task completion after both task execution and log streaming are done.
 // This ensures logs are correctly attributed to tasks regardless of message arrival order.
 func (m Model) completeTask(result task.Result) (Model, tea.Cmd) {
-	// Persist current logs to history for the completed task
-	// Note: exec.Current() points to the NEXT task after RunNext,
-	// so we need to subtract 1 to get the just-completed task index
-	taskIdx := m.exec.Current() - 1
-	if taskIdx >= 0 && len(m.currentLogs) > 0 {
-		m.logHistory[taskIdx] = m.currentLogs
-	}
-
-	// Clear current logs and coordination state for next task
-	m.currentLogs = []string{}
-	m.pendingResult = nil
-	m.logsDone = false
+	// Log persistence and coordination state handled by coordinator
+	// (logs already saved when TaskDone/LogsDone returned completion message)
 
 	// Stop execution if task failed
 	if result.Status == task.StatusFailed {

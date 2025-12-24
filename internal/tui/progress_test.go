@@ -15,7 +15,7 @@ func TestRenderProgress(t *testing.T) {
 		total    int
 		elapsed  time.Duration
 		width    int
-		wantText string // Expected text in the stats line
+		wantText string
 	}{
 		{
 			name:     "0% progress",
@@ -63,14 +63,11 @@ func TestRenderProgress(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := RenderProgress(tt.current, tt.total, tt.elapsed, tt.width)
 
-			// Result should have two lines: stats and bar
 			lines := strings.Split(result, "\n")
 			assert.Len(t, lines, 2, "should have 2 lines: stats and bar")
 
-			// Check that stats line contains expected text (ignoring ANSI codes)
 			assert.Contains(t, lines[0], tt.wantText, "stats line should contain expected text")
 
-			// Check that bar line contains progress characters (or is all empty for 0%)
 			barLine := lines[1]
 			hasFilled := strings.Contains(barLine, "█")
 			hasEmpty := strings.Contains(barLine, "░")
@@ -85,40 +82,40 @@ func TestRenderProgress_BarWidth(t *testing.T) {
 		current    int
 		total      int
 		width      int
-		wantFilled int // Expected number of filled blocks
-		wantTotal  int // Expected total bar width (clamped to width/2)
+		wantFilled int
+		wantTotal  int
 	}{
 		{
 			name:       "50% with width 20",
 			current:    5,
 			total:      10,
 			width:      20,
-			wantFilled: 5,  // 50% of 10 (width/2)
-			wantTotal:  10, // clamped to width/2
+			wantFilled: 5,
+			wantTotal:  10,
 		},
 		{
 			name:       "25% with width 40",
 			current:    1,
 			total:      4,
 			width:      40,
-			wantFilled: 5,  // 25% of 20 (width/2)
-			wantTotal:  20, // clamped to width/2
+			wantFilled: 5,
+			wantTotal:  20,
 		},
 		{
 			name:       "100% with width 10",
 			current:    10,
 			total:      10,
 			width:      10,
-			wantFilled: 5, // 100% of 5 (width/2)
-			wantTotal:  5, // clamped to width/2
+			wantFilled: 5,
+			wantTotal:  5,
 		},
 		{
 			name:       "0% with width 10",
 			current:    0,
 			total:      10,
 			width:      10,
-			wantFilled: 0, // 0% of 5 (width/2)
-			wantTotal:  5, // clamped to width/2
+			wantFilled: 0,
+			wantTotal:  5,
 		},
 	}
 
@@ -127,12 +124,11 @@ func TestRenderProgress_BarWidth(t *testing.T) {
 			result := RenderProgress(tt.current, tt.total, 0, tt.width)
 			lines := strings.Split(result, "\n")
 
-			// Strip ANSI codes to count actual characters
 			barLine := stripANSI(lines[1])
 
 			filledCount := strings.Count(barLine, "█")
 			emptyCount := strings.Count(barLine, "░")
-			// Count as runes, not bytes (█ and ░ are multi-byte UTF-8)
+
 			totalRunes := len([]rune(barLine))
 
 			assert.Equal(t, tt.wantFilled, filledCount, "filled blocks count mismatch")
@@ -146,32 +142,32 @@ func TestRenderProgress_WidthConstraint(t *testing.T) {
 	tests := []struct {
 		name          string
 		terminalWidth int
-		wantMaxBar    int // Expected max bar width (terminal width / 2)
+		wantMaxBar    int
 	}{
 		{
 			name:          "very wide terminal (200 cols)",
 			terminalWidth: 200,
-			wantMaxBar:    100, // clamped to 50%
+			wantMaxBar:    100,
 		},
 		{
 			name:          "wide terminal (120 cols)",
 			terminalWidth: 120,
-			wantMaxBar:    60, // clamped to 50%
+			wantMaxBar:    60,
 		},
 		{
 			name:          "normal terminal (80 cols)",
 			terminalWidth: 80,
-			wantMaxBar:    40, // clamped to 50%
+			wantMaxBar:    40,
 		},
 		{
 			name:          "narrow terminal (40 cols)",
 			terminalWidth: 40,
-			wantMaxBar:    20, // clamped to 50%
+			wantMaxBar:    20,
 		},
 		{
 			name:          "very narrow terminal (20 cols)",
 			terminalWidth: 20,
-			wantMaxBar:    10, // clamped to 50%
+			wantMaxBar:    10,
 		},
 	}
 
@@ -180,11 +176,9 @@ func TestRenderProgress_WidthConstraint(t *testing.T) {
 			result := RenderProgress(5, 10, 0, tt.terminalWidth)
 			lines := strings.Split(result, "\n")
 
-			// Strip ANSI codes to count actual characters
 			barLine := stripANSI(lines[1])
 			barWidth := len([]rune(barLine))
 
-			// Bar width should be clamped to terminal width / 2
 			assert.Equal(t, tt.wantMaxBar, barWidth, "bar should be constrained to 50%% of terminal width")
 			assert.LessOrEqual(t, barWidth, tt.terminalWidth/2, "bar should not exceed half terminal width")
 		})
@@ -205,7 +199,7 @@ func TestRenderProgress_EdgeCases(t *testing.T) {
 
 	t.Run("zero total", func(t *testing.T) {
 		result := RenderProgress(5, 0, 0, 20)
-		// Should not panic, should handle gracefully
+
 		assert.NotEmpty(t, result, "should return non-empty result")
 	})
 
@@ -218,7 +212,7 @@ func TestRenderProgress_EdgeCases(t *testing.T) {
 		result := RenderProgress(5, 10, 30*time.Second, 0)
 		lines := strings.Split(result, "\n")
 		assert.Len(t, lines, 2, "should still render two lines")
-		// Bar should be present
+
 		barLine := stripANSI(lines[1])
 		assert.NotEmpty(t, barLine, "bar should have some width")
 	})
@@ -281,7 +275,6 @@ func TestFormatElapsedCompact(t *testing.T) {
 }
 
 func TestRenderProgress_ProgressCalculation(t *testing.T) {
-	// Test that progress percentage is calculated correctly
 	tests := []struct {
 		current int
 		total   int
@@ -292,8 +285,8 @@ func TestRenderProgress_ProgressCalculation(t *testing.T) {
 		{3, 12, "25%"},
 		{5, 10, "50%"},
 		{7, 10, "70%"},
-		{1, 3, "33%"}, // Test rounding
-		{2, 3, "66%"}, // Test rounding
+		{1, 3, "33%"},
+		{2, 3, "66%"},
 	}
 
 	for _, tt := range tests {
@@ -354,11 +347,9 @@ func TestRenderProgressWithOptions_ETA(t *testing.T) {
 			}
 			result := RenderProgressWithOptions(tt.current, tt.total, tt.elapsed, 80, opts)
 
-			// Result should have two lines: stats and bar
 			lines := strings.Split(result, "\n")
 			assert.Len(t, lines, 2, "should have 2 lines: stats and bar")
 
-			// Check that stats line contains expected text (ignoring ANSI codes)
 			assert.Contains(t, lines[0], tt.wantText, "stats line should contain expected text")
 		})
 	}
@@ -398,11 +389,9 @@ func TestRenderProgressWithOptions_RunningTask(t *testing.T) {
 			}
 			result := RenderProgressWithOptions(tt.current, tt.total, tt.elapsed, 100, opts)
 
-			// Result should have two lines: stats and bar
 			lines := strings.Split(result, "\n")
 			assert.Len(t, lines, 2, "should have 2 lines: stats and bar")
 
-			// Check that stats line contains expected text (ignoring ANSI codes)
 			assert.Contains(t, lines[0], tt.wantText, "stats line should contain expected text")
 		})
 	}
@@ -453,11 +442,9 @@ func TestRenderProgressWithOptions_Combined(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := RenderProgressWithOptions(tt.current, tt.total, tt.elapsed, 100, tt.opts)
 
-			// Result should have two lines: stats and bar
 			lines := strings.Split(result, "\n")
 			assert.Len(t, lines, 2, "should have 2 lines: stats and bar")
 
-			// Check that stats line contains expected text (ignoring ANSI codes)
 			assert.Contains(t, lines[0], tt.wantText, "stats line should contain expected text")
 		})
 	}
@@ -470,7 +457,6 @@ func TestRenderProgressWithOptions_Complete(t *testing.T) {
 		lines := strings.Split(result, "\n")
 		assert.Len(t, lines, 2)
 
-		// Should show "Complete" not "100%"
 		assert.Contains(t, lines[0], "Complete")
 		assert.NotContains(t, lines[0], "100%")
 		assert.Contains(t, lines[0], "10 of 10 tasks")
@@ -491,21 +477,17 @@ func TestRenderProgressWithOptions_Complete(t *testing.T) {
 	})
 }
 
-// stripANSI removes ANSI escape codes from a string for testing purposes.
-// This is a simple implementation that handles basic color codes.
 func stripANSI(s string) string {
-	// Simple state machine to strip ANSI codes
 	var result strings.Builder
 	inEscape := false
 
 	for i := 0; i < len(s); i++ {
 		if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == '[' {
 			inEscape = true
-			i++ // Skip the '['
+			i++
 			continue
 		}
 		if inEscape {
-			// Skip until we find a letter (end of escape sequence)
 			if (s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= 'a' && s[i] <= 'z') {
 				inEscape = false
 			}

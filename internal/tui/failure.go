@@ -7,34 +7,21 @@ import (
 )
 
 const (
-	maxOutputLines = 10 // Maximum number of output lines to show in failure box
+	maxOutputLines = 10
 )
 
-// FailureInfo contains information about a failed task
 type FailureInfo struct {
 	TaskName string
 	Error    error
-	Output   string // Last output/logs from the task
+	Output   string
 	Duration time.Duration
 }
 
-// RenderFailure renders a failure box with context
-// Should produce something like:
-// ┌─ FAILED ──────────────────────────────────────────┐
-// │  ✗ mise: Install python@3.12                      │
-// │                                                   │
-// │  Error: Build failed - missing libssl-dev         │
-// │                                                   │
-// │  ─── Last output ───                              │
-// │  configure: error: OpenSSL not found              │
-// │  make: *** [Makefile:123] Error 1                 │
-// └───────────────────────────────────────────────────┘
 func RenderFailure(info FailureInfo, width int) string {
-	// Calculate inner width (accounting for box borders and padding)
 	innerWidth := max(
-		// 2 for borders + 4 for padding
+
 		width-6,
-		// Minimum reasonable width
+
 		20)
 
 	var content strings.Builder
@@ -75,7 +62,6 @@ func RenderFailure(info FailureInfo, width int) string {
 	return boxStyle.Render(boxContent)
 }
 
-// truncateLine truncates a line to the specified width, adding ellipsis if needed
 func truncateLine(line string, maxWidth int) string {
 	if len(line) <= maxWidth {
 		return line
@@ -86,7 +72,6 @@ func truncateLine(line string, maxWidth int) string {
 	return line[:maxWidth-3] + "..."
 }
 
-// wrapText wraps text to fit within the specified width
 func wrapText(text string, width int) []string {
 	if width <= 0 {
 		return []string{text}
@@ -101,7 +86,6 @@ func wrapText(text string, width int) []string {
 			break
 		}
 
-		// Try to break at a word boundary
 		breakPoint := width
 		for i := width - 1; i >= width/2; i-- {
 			if remaining[i] == ' ' {
@@ -117,13 +101,11 @@ func wrapText(text string, width int) []string {
 	return lines
 }
 
-// getLastLines returns the last N lines from a multi-line string
 func getLastLines(text string, n int) []string {
 	if text == "" {
 		return nil
 	}
 
-	// Split by newlines and filter out empty trailing lines
 	allLines := strings.Split(strings.TrimSpace(text), "\n")
 
 	if len(allLines) <= n {
@@ -133,8 +115,6 @@ func getLastLines(text string, n int) []string {
 	return allLines[len(allLines)-n:]
 }
 
-// RenderFailureSummary renders a compact failure list for multiple failures
-// Used when multiple tasks fail and you want to show them all
 func RenderFailureSummary(failures []FailureInfo, width int) string {
 	if len(failures) == 0 {
 		return ""

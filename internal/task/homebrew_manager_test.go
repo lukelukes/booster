@@ -10,38 +10,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// --- Test Helpers ---
-
-// mockBrewPathFinder creates a simple mock BrewPathFinder for testing.
 func mockBrewPathFinder(path string, found bool) BrewPathFinder {
 	return func() (string, bool) {
 		return path, found
 	}
 }
 
-// --- Homebrew Path Detection Tests ---
-
 func TestHomebrewManager_brewPath_UsesDiscoveredPath(t *testing.T) {
-	// When PathFinder finds brew, brewPath() should return the full path
 	finder := mockBrewPathFinder("/opt/homebrew/bin/brew", true)
 	manager := NewHomebrewManager(nil, finder)
 	assert.Equal(t, "/opt/homebrew/bin/brew", manager.brewPath())
 }
 
 func TestHomebrewManager_brewPath_FallsBackToBrewWhenNotFound(t *testing.T) {
-	// When PathFinder doesn't find brew, brewPath() should return "brew"
 	finder := mockBrewPathFinder("", false)
 	manager := NewHomebrewManager(nil, finder)
 	assert.Equal(t, "brew", manager.brewPath())
 }
 
 func TestHomebrewManager_UsesFullPathWhenDiscovered(t *testing.T) {
-	// Simulate brew being installed at a known path
 	finder := mockBrewPathFinder("/opt/homebrew/bin/brew", true)
 
 	mock := &cmdexec.MockRunner{
 		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
-			// Should be called with full path, not just "brew"
 			assert.Equal(t, "/opt/homebrew/bin/brew", name, "should use discovered full path")
 			return []byte("git\ncurl\n"), nil
 		},
@@ -51,23 +42,18 @@ func TestHomebrewManager_UsesFullPathWhenDiscovered(t *testing.T) {
 	_, err := manager.ListInstalled(context.Background())
 	require.NoError(t, err)
 
-	// Verify the command was called with the full path
 	require.Len(t, mock.Calls, 1)
 	assert.Equal(t, "/opt/homebrew/bin/brew", mock.Calls[0].Name)
 }
 
 func TestHomebrewManager_DetectsFreshlyInstalledBrew(t *testing.T) {
-	// Simulate the scenario where brew is installed mid-session
-	// First call: brew not found
-	// Second call: brew found (simulating installation happened)
-
 	callCount := 0
 	finder := func() (string, bool) {
 		callCount++
 		if callCount == 1 {
-			return "", false // Not found on first call
+			return "", false
 		}
-		return "/opt/homebrew/bin/brew", true // Found on second call
+		return "/opt/homebrew/bin/brew", true
 	}
 
 	mock := &cmdexec.MockRunner{
@@ -78,18 +64,14 @@ func TestHomebrewManager_DetectsFreshlyInstalledBrew(t *testing.T) {
 
 	manager := NewHomebrewManager(mock, finder)
 
-	// First call - brew not found, should use "brew" fallback
 	_, _ = manager.ListInstalled(context.Background())
 	require.Len(t, mock.Calls, 1)
 	assert.Equal(t, "brew", mock.Calls[0].Name, "first call should use fallback")
 
-	// Second call - brew now found at known path
 	_, _ = manager.ListInstalled(context.Background())
 	require.Len(t, mock.Calls, 2)
 	assert.Equal(t, "/opt/homebrew/bin/brew", mock.Calls[1].Name, "second call should use discovered path")
 }
-
-// --- HomebrewManager Tests ---
 
 func TestHomebrewManager_Name(t *testing.T) {
 	manager := NewHomebrewManager(nil, nil)
@@ -167,7 +149,6 @@ func TestHomebrewManager_Install(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, output, "Installing git")
 
-	// Verify brew was called with correct args
 	require.Len(t, mock.Calls, 1)
 	call := mock.Calls[0]
 	assert.Equal(t, "brew", call.Name)
@@ -274,7 +255,6 @@ func TestHomebrewManager_InstallCasks(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, output, "Installing Cask")
 
-	// Verify brew was called with --cask flag
 	require.Len(t, mock.Calls, 1)
 	call := mock.Calls[0]
 	assert.Equal(t, "brew", call.Name)

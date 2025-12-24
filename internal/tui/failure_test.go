@@ -14,7 +14,7 @@ func TestRenderFailure(t *testing.T) {
 		name     string
 		info     FailureInfo
 		width    int
-		wantText []string // Text fragments that should appear in output
+		wantText []string
 	}{
 		{
 			name: "basic failure with error",
@@ -57,7 +57,6 @@ func TestRenderFailure(t *testing.T) {
 				"FAILED",
 				"✗ Install package",
 				"Error:",
-				// The text will be wrapped but we don't need to test exact wrapping
 			},
 		},
 		{
@@ -88,8 +87,8 @@ func TestRenderFailure(t *testing.T) {
 				"FAILED",
 				"✗ Build project",
 				"─── Last output ───",
-				"line 6",  // Should show last 10 lines
-				"line 15", // Last line should be present
+				"line 6",
+				"line 15",
 			},
 		},
 		{
@@ -126,24 +125,17 @@ func TestRenderFailure(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			output := RenderFailure(tt.info, tt.width)
 
-			// Check that output is not empty
 			assert.NotEmpty(t, output, "output should not be empty")
 
-			// Check for expected text fragments
 			for _, want := range tt.wantText {
 				assert.Contains(t, output, want,
 					"output should contain %q", want)
 			}
 
-			// Check that output respects width constraints (roughly)
-			// Note: ANSI escape codes and box drawing chars make exact width checking complex
-			// We just ensure the output is reasonable, not exact
 			lines := strings.SplitSeq(output, "\n")
 			for line := range lines {
-				// Strip ANSI codes for length check (simplified)
 				stripped := stripAnsiSimple(line)
-				// Very generous margin - lipgloss boxes add borders, padding, ANSI codes
-				// The important thing is the function doesn't panic and produces output
+
 				assert.LessOrEqual(t, len(stripped), tt.width*3,
 					"line should be reasonable width: %q", stripped)
 			}
@@ -187,8 +179,6 @@ func TestTruncateLine(t *testing.T) {
 			line:     "hello",
 			maxWidth: 2,
 			want:     "...",
-			// Note: this will return "..." which is 3 chars, exceeding maxWidth of 2
-			// This is acceptable edge case behavior
 		},
 	}
 
@@ -196,8 +186,7 @@ func TestTruncateLine(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := truncateLine(tt.line, tt.maxWidth)
 			assert.Equal(t, tt.want, got)
-			// For very small widths (<= 3), truncate returns "..." which is 3 chars
-			// This is acceptable edge case behavior
+
 			if tt.maxWidth > 3 {
 				assert.LessOrEqual(t, len(got), tt.maxWidth)
 			}
@@ -259,7 +248,7 @@ func TestWrapText(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := wrapText(tt.text, tt.width)
 			assert.Equal(t, tt.want, got)
-			// Only check width constraint for positive widths
+
 			if tt.width > 0 {
 				for i, line := range got {
 					assert.LessOrEqual(t, len(line), tt.width,
@@ -394,7 +383,7 @@ func TestRenderFailureSummary(t *testing.T) {
 			wantText: []string{
 				"FAILURES (1)",
 				"✗ Complex task",
-				"first line", // Only first line should appear
+				"first line",
 			},
 		},
 		{
@@ -424,7 +413,6 @@ func TestRenderFailureSummary(t *testing.T) {
 
 			assert.NotEmpty(t, output, "output should not be empty")
 
-			// Check for expected text fragments
 			if tt.wantText != nil {
 				for _, want := range tt.wantText {
 					assert.Contains(t, output, want,
@@ -444,19 +432,14 @@ func TestRenderFailureWithDuration(t *testing.T) {
 
 	output := RenderFailure(info, 60)
 
-	// Basic checks
 	assert.Contains(t, output, "FAILED")
 	assert.Contains(t, output, "Long running task")
 	assert.Contains(t, output, "timeout")
 
-	// Duration is stored but not necessarily rendered (per requirements)
-	// Just ensure it doesn't cause issues
 	assert.NotEmpty(t, output)
 }
 
-// stripAnsiSimple removes ANSI escape codes (simplified version)
 func stripAnsiSimple(s string) string {
-	// Very simple ANSI stripper - good enough for tests
 	result := ""
 	inEscape := false
 	for _, r := range s {

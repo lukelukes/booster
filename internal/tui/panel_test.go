@@ -68,9 +68,8 @@ func TestRenderPanel(t *testing.T) {
 			},
 			validate: func(t *testing.T, result string) {
 				lines := strings.SplitSeq(result, "\n")
-				// Check that no line exceeds the width (accounting for borders)
+
 				for line := range lines {
-					// Use visible width to account for ANSI codes
 					visibleWidth := lipgloss.Width(line)
 					assert.LessOrEqual(t, visibleWidth, 20, "line should not exceed panel width")
 				}
@@ -115,7 +114,6 @@ func TestRenderPanel(t *testing.T) {
 				BorderColor: DefaultBorderColor,
 			},
 			validate: func(t *testing.T, result string) {
-				// Should handle gracefully, not panic
 				assert.NotEmpty(t, result)
 			},
 		},
@@ -129,7 +127,6 @@ func TestRenderPanel(t *testing.T) {
 				BorderColor: DefaultBorderColor,
 			},
 			validate: func(t *testing.T, result string) {
-				// Should handle gracefully, not panic
 				assert.NotEmpty(t, result)
 			},
 		},

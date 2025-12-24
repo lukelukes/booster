@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRenderSummary_SuccessState verifies successful completion summary.
 func TestRenderSummary_SuccessState(t *testing.T) {
 	data := SummaryData{
 		Done:    12,
@@ -25,11 +24,9 @@ func TestRenderSummary_SuccessState(t *testing.T) {
 
 	result := RenderSummary(data, 60)
 
-	// Verify header contains success indicator
 	assert.Contains(t, result, "✓ BOOSTER COMPLETE", "Should contain success message")
 	assert.Contains(t, result, "2m 34s", "Should contain formatted elapsed time")
 
-	// Verify summary section
 	assert.Contains(t, result, "Summary", "Should contain summary section")
 	assert.Contains(t, result, "12", "Should show completed count")
 	assert.Contains(t, result, "completed", "Should show completed label")
@@ -38,24 +35,20 @@ func TestRenderSummary_SuccessState(t *testing.T) {
 	assert.Contains(t, result, "0", "Should show failed count")
 	assert.Contains(t, result, "failed", "Should show failed label")
 
-	// Verify percentages (80%, 20%, 0%)
 	assert.Contains(t, result, "80%", "Should show 80% for completed")
 	assert.Contains(t, result, "20%", "Should show 20% for skipped")
 	assert.Contains(t, result, "0%", "Should show 0% for failed")
 
-	// Verify slowest tasks section
 	assert.Contains(t, result, "Slowest Tasks", "Should contain slowest tasks section")
 	assert.Contains(t, result, "45", "Should show first task duration")
 	assert.Contains(t, result, "mise: Install node@22", "Should show first task name")
 	assert.Contains(t, result, "23", "Should show second task duration")
 	assert.Contains(t, result, "mise: Install python@3.12", "Should show second task name")
 
-	// Verify progress bars are present (using block characters)
 	assert.Contains(t, result, "█", "Should contain filled bar blocks")
 	assert.Contains(t, result, "░", "Should contain empty bar blocks")
 }
 
-// TestRenderFailedSummary_FailureState verifies failure summary.
 func TestRenderFailedSummary_FailureState(t *testing.T) {
 	data := SummaryData{
 		Done:    5,
@@ -70,26 +63,21 @@ func TestRenderFailedSummary_FailureState(t *testing.T) {
 
 	result := RenderFailedSummary(data, 60)
 
-	// Verify header contains failure indicator
 	assert.Contains(t, result, "✗ BOOSTER FAILED", "Should contain failure message")
 	assert.Contains(t, result, "45s", "Should contain formatted elapsed time")
 
-	// Verify summary section shows all counts
 	assert.Contains(t, result, "5", "Should show completed count")
 	assert.Contains(t, result, "2", "Should show skipped count")
 	assert.Contains(t, result, "3", "Should show failed count")
 
-	// Verify percentages (50%, 20%, 30%)
 	assert.Contains(t, result, "50%", "Should show 50% for completed")
 	assert.Contains(t, result, "20%", "Should show 20% for skipped")
 	assert.Contains(t, result, "30%", "Should show 30% for failed")
 
-	// Verify slowest tasks section
 	assert.Contains(t, result, "Slowest Tasks", "Should contain slowest tasks section")
 	assert.Contains(t, result, "failed task", "Should show task name")
 }
 
-// TestRenderSummary_NoSlowestTasks verifies rendering without slowest tasks.
 func TestRenderSummary_NoSlowestTasks(t *testing.T) {
 	data := SummaryData{
 		Done:         5,
@@ -97,16 +85,14 @@ func TestRenderSummary_NoSlowestTasks(t *testing.T) {
 		Failed:       0,
 		Total:        5,
 		Elapsed:      30 * time.Second,
-		SlowestTasks: []TaskTiming{}, // Empty
+		SlowestTasks: []TaskTiming{},
 	}
 
 	result := RenderSummary(data, 60)
 
-	// Should not contain slowest tasks section
 	assert.NotContains(t, result, "Slowest Tasks", "Should not contain slowest tasks section when empty")
 }
 
-// TestRenderSummary_AllSkipped verifies rendering when all tasks are skipped.
 func TestRenderSummary_AllSkipped(t *testing.T) {
 	data := SummaryData{
 		Done:    0,
@@ -118,16 +104,13 @@ func TestRenderSummary_AllSkipped(t *testing.T) {
 
 	result := RenderSummary(data, 60)
 
-	// Verify percentages (0%, 100%, 0%)
 	assert.Contains(t, result, "0%", "Should show 0% for completed")
 	assert.Contains(t, result, "100%", "Should show 100% for skipped")
 
-	// Verify progress bars reflect this
 	assert.Contains(t, result, "10", "Should show skipped count")
 	assert.Contains(t, result, "0", "Should show completed count as 0")
 }
 
-// TestRenderSummary_EdgeCaseZeroTasks verifies handling of zero tasks.
 func TestRenderSummary_EdgeCaseZeroTasks(t *testing.T) {
 	data := SummaryData{
 		Done:    0,
@@ -137,14 +120,12 @@ func TestRenderSummary_EdgeCaseZeroTasks(t *testing.T) {
 		Elapsed: 0,
 	}
 
-	// Should not panic
 	result := RenderSummary(data, 60)
 
 	assert.NotEmpty(t, result, "Should return non-empty result even with zero tasks")
 	assert.Contains(t, result, "✓ BOOSTER COMPLETE", "Should contain success message")
 }
 
-// TestRenderSummary_VariousWidths verifies rendering at different terminal widths.
 func TestRenderSummary_VariousWidths(t *testing.T) {
 	data := SummaryData{
 		Done:    5,
@@ -168,7 +149,6 @@ func TestRenderSummary_VariousWidths(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Should not panic
 			result := RenderSummary(data, tt.width)
 			assert.NotEmpty(t, result, "Should return non-empty result")
 			assert.Contains(t, result, "✓ BOOSTER COMPLETE", "Should contain success message")
@@ -176,7 +156,6 @@ func TestRenderSummary_VariousWidths(t *testing.T) {
 	}
 }
 
-// TestRenderSummary_ManySlowestTasks verifies only top 3 tasks are shown.
 func TestRenderSummary_ManySlowestTasks(t *testing.T) {
 	data := SummaryData{
 		Done:    10,
@@ -188,24 +167,21 @@ func TestRenderSummary_ManySlowestTasks(t *testing.T) {
 			{Name: "task1", Duration: 50 * time.Second},
 			{Name: "task2", Duration: 40 * time.Second},
 			{Name: "task3", Duration: 30 * time.Second},
-			{Name: "task4", Duration: 20 * time.Second}, // Should not appear
-			{Name: "task5", Duration: 10 * time.Second}, // Should not appear
+			{Name: "task4", Duration: 20 * time.Second},
+			{Name: "task5", Duration: 10 * time.Second},
 		},
 	}
 
 	result := RenderSummary(data, 60)
 
-	// Verify top 3 are present
 	assert.Contains(t, result, "task1", "Should show first slowest task")
 	assert.Contains(t, result, "task2", "Should show second slowest task")
 	assert.Contains(t, result, "task3", "Should show third slowest task")
 
-	// Verify 4th and 5th are not present
 	assert.NotContains(t, result, "task4", "Should not show fourth task")
 	assert.NotContains(t, result, "task5", "Should not show fifth task")
 }
 
-// TestFormatDuration verifies duration formatting.
 func TestFormatDuration(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -267,7 +243,6 @@ func TestFormatDuration(t *testing.T) {
 	}
 }
 
-// TestRenderMiniBar verifies progress bar rendering.
 func TestRenderMiniBar(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -277,8 +252,8 @@ func TestRenderMiniBar(t *testing.T) {
 		{"0 percent", 0, 20},
 		{"50 percent", 50, 20},
 		{"100 percent", 100, 20},
-		{"over 100 percent", 150, 20}, // Should cap at 100%
-		{"negative percent", -10, 20}, // Should show as 0%
+		{"over 100 percent", 150, 20},
+		{"negative percent", -10, 20},
 		{"small width", 25, 10},
 		{"large width", 75, 40},
 	}
@@ -287,32 +262,25 @@ func TestRenderMiniBar(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := renderMiniBar(tt.percent, tt.width)
 
-			// Result should not be empty
 			assert.NotEmpty(t, result, "Progress bar should not be empty")
 
-			// Check that result contains expected characters
-			// Note: we check the raw string contains these chars (styles may wrap them)
 			hasBlocks := strings.Contains(result, "█") || strings.Contains(result, "░")
 			assert.True(t, hasBlocks, "Progress bar should contain block characters")
 		})
 	}
 }
 
-// TestRenderStatLine verifies individual stat line rendering.
 func TestRenderStatLine(t *testing.T) {
 	result := renderStatLine(12, "completed", 80.0, doneStyle)
 
-	// Verify components are present
 	assert.Contains(t, result, "12", "Should contain count")
 	assert.Contains(t, result, "completed", "Should contain label")
 	assert.Contains(t, result, "80%", "Should contain percentage")
 
-	// Should contain progress bar characters
 	hasBlocks := strings.Contains(result, "█") || strings.Contains(result, "░")
 	assert.True(t, hasBlocks, "Should contain progress bar")
 }
 
-// TestRenderStatistics verifies statistics section rendering.
 func TestRenderStatistics(t *testing.T) {
 	data := SummaryData{
 		Done:    8,
@@ -323,33 +291,27 @@ func TestRenderStatistics(t *testing.T) {
 
 	result := renderStatistics(data)
 
-	// Verify section title
 	assert.Contains(t, result, "Summary", "Should contain section title")
 
-	// Verify all three stat lines
 	assert.Contains(t, result, "8", "Should show done count")
 	assert.Contains(t, result, "completed", "Should show completed label")
 	assert.Contains(t, result, "1", "Should show skipped count")
 	assert.Contains(t, result, "skipped", "Should show skipped label")
 	assert.Contains(t, result, "failed", "Should show failed label")
 
-	// Verify percentages
 	assert.Contains(t, result, "80%", "Should show 80% for done")
 	assert.Contains(t, result, "10%", "Should show 10% for skipped")
 	assert.Contains(t, result, "10%", "Should show 10% for failed")
 }
 
-// TestRenderHeaderBox verifies header box rendering.
 func TestRenderHeaderBox(t *testing.T) {
 	result := renderHeaderBox("✓ BOOSTER COMPLETE", 2*time.Minute+34*time.Second, 60, summarySuccessStyle)
 
-	// Verify title and elapsed time are present
 	assert.Contains(t, result, "✓ BOOSTER COMPLETE", "Should contain title")
 	assert.Contains(t, result, "2m 34s", "Should contain elapsed time")
 	assert.Contains(t, result, "total", "Should contain 'total' label")
 }
 
-// TestRenderSlowestTasks verifies slowest tasks section rendering.
 func TestRenderSlowestTasks(t *testing.T) {
 	tasks := []TaskTiming{
 		{Name: "mise: Install node@22", Duration: 45*time.Second + 200*time.Millisecond},
@@ -358,19 +320,15 @@ func TestRenderSlowestTasks(t *testing.T) {
 
 	result := renderSlowestTasks(tasks)
 
-	// Verify section title
 	assert.Contains(t, result, "Slowest Tasks", "Should contain section title")
 
-	// Verify tasks are present
 	assert.Contains(t, result, "mise: Install node@22", "Should show first task")
 	assert.Contains(t, result, "mise: Install python@3.12", "Should show second task")
 
-	// Verify durations are present
 	assert.Contains(t, result, "45", "Should show first task duration")
 	assert.Contains(t, result, "23", "Should show second task duration")
 }
 
-// TestRenderSlowestTasks_OnlyOne verifies rendering with a single slowest task.
 func TestRenderSlowestTasks_OnlyOne(t *testing.T) {
 	tasks := []TaskTiming{
 		{Name: "single task", Duration: 30 * time.Second},
@@ -383,29 +341,16 @@ func TestRenderSlowestTasks_OnlyOne(t *testing.T) {
 	assert.Contains(t, result, "30", "Should show duration")
 }
 
-// TestRenderStatLine_Alignment verifies that all stat lines have aligned progress bars.
 func TestRenderStatLine_Alignment(t *testing.T) {
-	// Render stat lines for all three label types
 	completedLine := renderStatLine(12, "completed", 80.0, doneStyle)
 	skippedLine := renderStatLine(3, "skipped", 20.0, skippedStyle)
 	failedLine := renderStatLine(0, "failed", 0.0, failedStyle)
 
-	// Verify that all lines contain the expected labels with padding
 	assert.Contains(t, completedLine, "completed", "Should contain completed label")
 	assert.Contains(t, skippedLine, "skipped", "Should contain skipped label")
 	assert.Contains(t, failedLine, "failed", "Should contain failed label")
 
-	// Verify that the labels were padded to 9 characters by checking structure
-	// Expected format: "     ## LABEL___    █..." where _ is padding
-	// The label "completed" is 9 chars (no padding needed)
-	// The label "skipped" should be padded to 9 chars: "skipped  "
-	// The label "failed" should be padded to 9 chars: "failed   "
-
-	// Extract the section between the count and the progress bar/percentage
-	// We can do this by finding the indices
 	extractMiddle := func(s string) string {
-		// Find where the count ends (after the first number)
-		// Then extract up until we see a sequence of bar chars or percentage
 		// For simplicity, extract the substring between first space+digit and last space+digit+%
 		start := strings.Index(s, " ")
 		if start == -1 {

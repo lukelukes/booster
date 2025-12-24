@@ -148,9 +148,6 @@ func TestSystemDetector_Detect_WithMockedFileReader(t *testing.T) {
 }
 
 func TestSystemDetector_Detect_OnDarwin(t *testing.T) {
-	// This test validates darwin-specific behavior and must run on macOS.
-	// On darwin, detectOS short-circuits and returns "darwin" without reading /etc/os-release.
-	// This test verifies that ReadFile is never called on darwin systems.
 	if runtime.GOOS != "darwin" {
 		t.Skip("This test validates darwin-specific behavior and requires macOS")
 	}

@@ -29,7 +29,6 @@ func TestFileStore_Save_CreatesParentDirectory(t *testing.T) {
 
 	require.NoError(t, err)
 
-	// Verify file was created
 	_, err = os.Stat(path)
 	assert.NoError(t, err)
 }
@@ -40,7 +39,6 @@ func TestFileStore_RoundTrip(t *testing.T) {
 
 	store := NewFileStore(path)
 
-	// Save values
 	original := map[string]string{
 		"Name":  "Alice",
 		"Email": "alice@example.com",
@@ -48,7 +46,6 @@ func TestFileStore_RoundTrip(t *testing.T) {
 	err := store.Save(original)
 	require.NoError(t, err)
 
-	// Load values back
 	loaded, err := store.Load()
 	require.NoError(t, err)
 
@@ -61,15 +58,12 @@ func TestFileStore_Save_OverwritesExisting(t *testing.T) {
 
 	store := NewFileStore(path)
 
-	// Save initial values
 	err := store.Save(map[string]string{"Name": "Alice"})
 	require.NoError(t, err)
 
-	// Overwrite with new values
 	err = store.Save(map[string]string{"Name": "Bob", "Email": "bob@example.com"})
 	require.NoError(t, err)
 
-	// Verify overwrite
 	loaded, err := store.Load()
 	require.NoError(t, err)
 

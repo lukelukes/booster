@@ -2,7 +2,6 @@ package task
 
 import "context"
 
-// mockPackageManager implements PackageManager for testing.
 type mockPackageManager struct {
 	installErr     error
 	installCaskErr error

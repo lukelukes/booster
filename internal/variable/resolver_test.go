@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mockCollector implements PromptCollector for testing.
 type mockCollector struct {
 	values map[string]string
 	err    error
@@ -50,7 +49,7 @@ func TestResolver_Resolve(t *testing.T) {
 			defs:          []Definition{{Name: "Name", Prompt: "Your name"}},
 			wantResolved:  map[string]string{"Name": "env-value"},
 			wantPrompted:  false,
-			wantSaved:     map[string]string{"Name": "stored-value"}, // store remains unchanged when env value is used
+			wantSaved:     map[string]string{"Name": "stored-value"},
 		},
 		{
 			name:          "uses stored value when no env var is set",
@@ -134,7 +133,6 @@ func TestResolver_Resolve(t *testing.T) {
 			storePath := filepath.Join(dir, "values.yaml")
 			store := NewFileStore(storePath)
 
-			// Pre-populate store if needed
 			if tt.storedValues != nil {
 				require.NoError(t, store.Save(tt.storedValues))
 			}
@@ -147,19 +145,16 @@ func TestResolver_Resolve(t *testing.T) {
 
 			resolved, err := resolver.Resolve(tt.defs)
 
-			// Check for expected error
 			if tt.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.wantErr)
 				return
 			}
 
-			// Verify successful resolution
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantResolved, resolved)
 			assert.Equal(t, tt.wantPrompted, collector.called)
 
-			// Verify saved values
 			savedValues, err := store.Load()
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantSaved, savedValues)
@@ -171,7 +166,6 @@ func TestResolver_MultipleVariables(t *testing.T) {
 	dir := t.TempDir()
 	store := NewFileStore(filepath.Join(dir, "values.yaml"))
 
-	// One from env, one from store, one from prompt
 	require.NoError(t, store.Save(map[string]string{"Email": "stored@example.com"}))
 
 	collector := &mockCollector{values: map[string]string{"Editor": "vim"}}

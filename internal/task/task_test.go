@@ -109,12 +109,10 @@ func TestBuilder_Build_ErrorIncludesTaskIndex(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "task 2") // 1-indexed
+	assert.Contains(t, err.Error(), "task 2")
 }
 
 func TestBuilder_Build_ErrorIndex_FirstTask(t *testing.T) {
-	// Tests ARITHMETIC_BASE mutation: i+1 vs i-1 in error messages
-	// First task error should show "task 1", not "task 0" or "task -1"
 	builder := NewBuilder().Register("failing", func(args any) ([]Task, error) {
 		return nil, errors.New("factory error")
 	})
@@ -129,7 +127,6 @@ func TestBuilder_Build_ErrorIndex_FirstTask(t *testing.T) {
 }
 
 func TestBuilder_Build_ErrorIndex_ThirdTask(t *testing.T) {
-	// Test error index at different positions
 	builder := NewBuilder().
 		Register("ok", func(args any) ([]Task, error) {
 			return nil, nil
@@ -152,7 +149,6 @@ func TestDefaultBuilder_RegistersAllTasks(t *testing.T) {
 	ctx := condition.Context{OS: "arch", Profile: "personal"}
 	builder := DefaultBuilder(ctx)
 
-	// Should be able to build dir.create tasks
 	tasks, err := builder.Build([]config.Task{
 		{Action: "dir.create", Args: []any{"~/test"}},
 	})
@@ -162,7 +158,6 @@ func TestDefaultBuilder_RegistersAllTasks(t *testing.T) {
 }
 
 func TestBuilder_Build_WithCondition(t *testing.T) {
-	// Create builder with evaluator that uses non-matching OS
 	eval := condition.NewEvaluator(condition.Context{OS: "nonexistent_os"})
 	builder := NewBuilder().Register("dir.create", NewDirCreate).WithEvaluator(eval)
 
@@ -177,14 +172,12 @@ func TestBuilder_Build_WithCondition(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 
-	// Verify behavior: task should be skipped when condition doesn't match
 	result := tasks[0].Run(context.Background())
 	assert.Equal(t, StatusSkipped, result.Status, "task should be skipped when condition doesn't match")
 	assert.Contains(t, result.Message, "condition not met", "skip message should indicate condition not met")
 }
 
 func TestBuilder_Build_WithoutCondition_NotWrapped(t *testing.T) {
-	// Create builder with evaluator that uses non-matching OS
 	eval := condition.NewEvaluator(condition.Context{OS: "nonexistent_os"})
 	builder := NewBuilder().Register("dir.create", NewDirCreate).WithEvaluator(eval)
 
@@ -198,12 +191,8 @@ func TestBuilder_Build_WithoutCondition_NotWrapped(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 
-	// Verify behavior: task without condition should execute normally,
-	// even when evaluator is present with non-matching OS.
-	// It may be skipped due to idempotency, but NOT due to condition.
 	result := tasks[0].Run(context.Background())
 
-	// The key observable behavior: if skipped, it's NOT due to unmet condition
 	if result.Status == StatusSkipped {
 		assert.NotContains(t, result.Message, "condition not met",
 			"task without condition should not skip due to unmet condition")
@@ -211,7 +200,6 @@ func TestBuilder_Build_WithoutCondition_NotWrapped(t *testing.T) {
 }
 
 func TestBuilder_Build_WithProfileCondition(t *testing.T) {
-	// Create builder with evaluator that has non-matching profile
 	eval := condition.NewEvaluator(condition.Context{OS: "arch", Profile: "work"})
 	builder := NewBuilder().Register("dir.create", NewDirCreate).WithEvaluator(eval)
 
@@ -226,7 +214,6 @@ func TestBuilder_Build_WithProfileCondition(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 
-	// Verify behavior: task should be skipped when profile doesn't match
 	result := tasks[0].Run(context.Background())
 	assert.Equal(t, StatusSkipped, result.Status, "task should be skipped when profile doesn't match")
 	assert.Contains(t, result.Message, "condition not met")
@@ -234,7 +221,6 @@ func TestBuilder_Build_WithProfileCondition(t *testing.T) {
 }
 
 func TestBuilder_Build_WithBothOSAndProfileCondition(t *testing.T) {
-	// Create builder with matching OS but non-matching profile
 	eval := condition.NewEvaluator(condition.Context{OS: "arch", Profile: "work"})
 	builder := NewBuilder().Register("dir.create", NewDirCreate).WithEvaluator(eval)
 
@@ -252,14 +238,12 @@ func TestBuilder_Build_WithBothOSAndProfileCondition(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 
-	// Verify behavior: task should be skipped because profile doesn't match (even though OS matches)
 	result := tasks[0].Run(context.Background())
 	assert.Equal(t, StatusSkipped, result.Status, "task should be skipped when profile doesn't match")
 	assert.Contains(t, result.Message, "profile=work")
 }
 
 func TestBuilder_Build_NoEvaluator_NoWrapping(t *testing.T) {
-	// Builder without evaluator (created with NewBuilder)
 	builder := NewBuilder().Register("dir.create", NewDirCreate)
 
 	tasks, err := builder.Build([]config.Task{
@@ -273,12 +257,8 @@ func TestBuilder_Build_NoEvaluator_NoWrapping(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 
-	// Verify behavior: task should execute normally when no evaluator is present,
-	// ignoring the condition entirely. It may be skipped due to idempotency,
-	// but NOT due to condition.
 	result := tasks[0].Run(context.Background())
 
-	// The key observable behavior: if skipped, it's NOT due to unmet condition
 	if result.Status == StatusSkipped {
 		assert.NotContains(t, result.Message, "condition not met",
 			"task should not skip due to unmet condition when no evaluator present")

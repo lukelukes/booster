@@ -10,21 +10,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// MockPrompter is a test double for Prompter.
 type MockPrompter struct {
-	// PromptFunc is called when Prompt is invoked.
 	PromptFunc func(ctx context.Context, promptText string) (string, error)
 
-	// Calls records all Prompt invocations for assertions.
 	Calls []PromptCall
 }
 
-// PromptCall records a single Prompt invocation.
 type PromptCall struct {
 	PromptText string
 }
 
-// Prompt delegates to PromptFunc and records the call.
 func (m *MockPrompter) Prompt(ctx context.Context, promptText string) (string, error) {
 	m.Calls = append(m.Calls, PromptCall{PromptText: promptText})
 	if m.PromptFunc != nil {
@@ -47,7 +42,7 @@ func TestGitConfig_Run(t *testing.T) {
 			name: "skips when value already set",
 			runFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				if name == "git" && len(args) == 4 && args[0] == "config" && args[3] == "init.defaultBranch" {
-					return []byte("main\n"), nil // Key already exists with value "main"
+					return []byte("main\n"), nil
 				}
 				return nil, errors.New("unexpected command")
 			},
@@ -65,10 +60,9 @@ func TestGitConfig_Run(t *testing.T) {
 			runFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				if name == "git" && len(args) == 4 && args[0] == "config" && args[1] == "--global" {
 					if args[2] == "--get" {
-						// Key doesn't exist
 						return nil, errors.New("exit status 1")
 					}
-					// Setting the value (args: config, --global, key, value)
+
 					return []byte(""), nil
 				}
 				return nil, errors.New("unexpected command")
@@ -87,10 +81,9 @@ func TestGitConfig_Run(t *testing.T) {
 			runFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				if name == "git" && len(args) == 4 && args[0] == "config" && args[1] == "--global" {
 					if args[2] == "--get" && args[3] == "init.defaultBranch" {
-						// Key exists with different value
 						return []byte("master\n"), nil
 					}
-					// Setting the value (args: config, --global, key, value)
+
 					return []byte(""), nil
 				}
 				return nil, errors.New("unexpected command")
@@ -108,7 +101,6 @@ func TestGitConfig_Run(t *testing.T) {
 			name: "skips when key exists and no explicit value",
 			runFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				if name == "git" && len(args) == 4 && args[0] == "config" && args[3] == "user.name" {
-					// Key already exists
 					return []byte("Existing User\n"), nil
 				}
 				return nil, errors.New("unexpected command")
@@ -125,19 +117,18 @@ func TestGitConfig_Run(t *testing.T) {
 			name: "skips when no prompt and no value",
 			runFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				if name == "git" && len(args) == 4 && args[0] == "config" && args[1] == "--global" && args[2] == "--get" {
-					// Key doesn't exist
 					return nil, errors.New("exit status 1")
 				}
 				return nil, errors.New("unexpected command")
 			},
-			items:       []GitConfigItem{{Key: "user.name"}}, // No value, no prompt
+			items:       []GitConfigItem{{Key: "user.name"}},
 			wantStatus:  StatusSkipped,
 			wantMessage: "all keys already configured",
 			wantCalls:   1,
 		},
 		{
 			name:        "empty items",
-			runFunc:     nil, // No commands should be run
+			runFunc:     nil,
 			items:       []GitConfigItem{},
 			wantStatus:  StatusSkipped,
 			wantMessage: "no items to configure",
@@ -188,10 +179,9 @@ func TestGitConfig_Prompting(t *testing.T) {
 			runFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				if name == "git" && len(args) == 4 && args[0] == "config" && args[1] == "--global" {
 					if args[2] == "--get" {
-						// Key doesn't exist
 						return nil, errors.New("exit status 1")
 					}
-					// Setting the value (args: config, --global, key, value)
+
 					return []byte(""), nil
 				}
 				return nil, errors.New("unexpected command")
@@ -215,10 +205,9 @@ func TestGitConfig_Prompting(t *testing.T) {
 			runFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				if name == "git" && len(args) == 4 && args[0] == "config" && args[1] == "--global" {
 					if args[2] == "--get" {
-						// Key doesn't exist
 						return nil, errors.New("exit status 1")
 					}
-					// Setting the value (args: config, --global, key, value)
+
 					return []byte(""), nil
 				}
 				return nil, errors.New("unexpected command")
@@ -241,7 +230,6 @@ func TestGitConfig_Prompting(t *testing.T) {
 			name: "fails when prompt cancelled",
 			runFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				if name == "git" && len(args) == 4 && args[0] == "config" && args[1] == "--global" && args[2] == "--get" {
-					// Key doesn't exist
 					return nil, errors.New("exit status 1")
 				}
 				return nil, errors.New("unexpected command")
@@ -254,19 +242,17 @@ func TestGitConfig_Prompting(t *testing.T) {
 			wantMessage:    "",
 			wantPromptCall: true,
 			checkCalls: func(t *testing.T, runner *cmdexec.MockRunner, prompter *MockPrompter) {
-				// Error should be checked in main assertion
 			},
 		},
 		{
 			name: "fails when prompter not configured",
 			runFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				if name == "git" && len(args) == 4 && args[0] == "config" && args[1] == "--global" && args[2] == "--get" {
-					// Key doesn't exist
 					return nil, errors.New("exit status 1")
 				}
 				return nil, errors.New("unexpected command")
 			},
-			promptFunc:     nil, // Will be handled specially
+			promptFunc:     nil,
 			items:          []GitConfigItem{{Key: "user.name", Prompt: "What is your name?"}},
 			wantStatus:     StatusFailed,
 			wantMessage:    "",
@@ -296,7 +282,6 @@ func TestGitConfig_Prompting(t *testing.T) {
 				assert.Equal(t, tt.wantMessage, result.Message)
 			}
 
-			// Check error cases
 			if tt.name == "fails when prompt cancelled" {
 				assert.Error(t, result.Error)
 				assert.Contains(t, result.Error.Error(), "prompt for user.name")
@@ -320,16 +305,13 @@ func TestGitConfig_HandlesMultipleItems(t *testing.T) {
 		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			if name == "git" && len(args) == 4 && args[0] == "config" && args[1] == "--global" {
 				if args[2] != "--get" {
-					// Setting values (args: config, --global, key, value)
 					return []byte(""), nil
 				}
 				key := args[3]
 				if key == "user.name" {
-					// user.name already exists
 					return []byte("John Doe\n"), nil
 				}
 				if key == "user.email" || key == "init.defaultBranch" {
-					// These don't exist
 					return nil, errors.New("exit status 1")
 				}
 			}
@@ -350,9 +332,9 @@ func TestGitConfig_HandlesMultipleItems(t *testing.T) {
 		Runner:   runner,
 		Prompter: prompter,
 		Items: []GitConfigItem{
-			{Key: "user.name", Prompt: "What is your name?"},   // Already exists, skip
-			{Key: "user.email", Prompt: "What is your email?"}, // Doesn't exist, prompt
-			{Key: "init.defaultBranch", Value: "main"},         // Doesn't exist, set explicitly
+			{Key: "user.name", Prompt: "What is your name?"},
+			{Key: "user.email", Prompt: "What is your email?"},
+			{Key: "init.defaultBranch", Value: "main"},
 		},
 	}
 
@@ -361,7 +343,7 @@ func TestGitConfig_HandlesMultipleItems(t *testing.T) {
 	assert.Equal(t, StatusDone, result.Status)
 	assert.Equal(t, "configured 2 keys (skipped 1)", result.Message)
 	assert.Len(t, prompter.Calls, 1, "Should prompt once for user.email")
-	// Verify calls: 3 checks + 2 sets
+
 	assert.Len(t, runner.Calls, 5)
 }
 
@@ -370,10 +352,9 @@ func TestGitConfig_FailsWhenGitCommandFails(t *testing.T) {
 		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			if name == "git" && len(args) == 4 && args[0] == "config" && args[1] == "--global" {
 				if args[2] == "--get" {
-					// Key doesn't exist
 					return nil, errors.New("exit status 1")
 				}
-				// git config --global fails when setting (args: config, --global, key, value)
+
 				return []byte("permission denied"), errors.New("exit status 1")
 			}
 			return nil, errors.New("unexpected command")
@@ -539,8 +520,6 @@ func TestNewGitConfig(t *testing.T) {
 }
 
 func TestGitConfig_ErrorOutputNoLeadingNewline(t *testing.T) {
-	// Tests boundary: allOutput.Len() > 0 vs >= 0
-	// When first write fails, output should NOT have leading newline
 	runner := &cmdexec.MockRunner{
 		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			if name == "git" && args[2] == "--get" {

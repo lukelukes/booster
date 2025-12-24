@@ -10,8 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Note: expandPath tests live in internal/pathutil/expand_test.go
-
 func TestDirCreate_CreatesNewDirectory(t *testing.T) {
 	dir := t.TempDir()
 	targetPath := filepath.Join(dir, "newdir")
@@ -22,7 +20,6 @@ func TestDirCreate_CreatesNewDirectory(t *testing.T) {
 	assert.Equal(t, StatusDone, result.Status)
 	assert.Equal(t, "created", result.Message)
 
-	// Verify directory was created
 	info, err := os.Stat(targetPath)
 	require.NoError(t, err)
 	assert.True(t, info.IsDir())
@@ -32,7 +29,6 @@ func TestDirCreate_SkipsExistingDirectory(t *testing.T) {
 	dir := t.TempDir()
 	targetPath := filepath.Join(dir, "existing")
 
-	// Pre-create the directory
 	require.NoError(t, os.Mkdir(targetPath, 0o755))
 
 	task := &DirCreate{Path: targetPath}
@@ -46,7 +42,6 @@ func TestDirCreate_FailsWhenFileExists(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "file")
 
-	// Create a file at the target path
 	require.NoError(t, os.WriteFile(filePath, []byte("content"), 0o644))
 
 	task := &DirCreate{Path: filePath}
@@ -66,7 +61,6 @@ func TestDirCreate_CreatesNestedDirectories(t *testing.T) {
 
 	assert.Equal(t, StatusDone, result.Status)
 
-	// Verify all nested directories were created
 	info, err := os.Stat(nestedPath)
 	require.NoError(t, err)
 	assert.True(t, info.IsDir())
@@ -78,15 +72,12 @@ func TestDirCreate_Idempotency(t *testing.T) {
 
 	task := &DirCreate{Path: targetPath}
 
-	// First run: creates
 	result1 := task.Run(context.Background())
 	assert.Equal(t, StatusDone, result1.Status)
 
-	// Second run: skips
 	result2 := task.Run(context.Background())
 	assert.Equal(t, StatusSkipped, result2.Status)
 
-	// Third run: still skips
 	result3 := task.Run(context.Background())
 	assert.Equal(t, StatusSkipped, result3.Status)
 }
@@ -104,7 +95,6 @@ func TestNewDirCreate_ValidArgs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, tasks, 2)
 
-	// Verify through interface - not implementation details
 	assert.Equal(t, "create ~/dir1", tasks[0].Name())
 	assert.Equal(t, "create ~/dir2", tasks[1].Name())
 }

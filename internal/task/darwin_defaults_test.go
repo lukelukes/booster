@@ -26,14 +26,13 @@ func TestDarwinDefaults_SkipOnNonDarwin(t *testing.T) {
 
 	assert.Equal(t, StatusSkipped, result.Status)
 	assert.Equal(t, "not macOS", result.Message)
-	// Should not make any shell calls
+
 	assert.Empty(t, runner.Calls)
 }
 
 func TestDarwinDefaults_SkipWhenValueMatches_Bool(t *testing.T) {
 	runner := &cmdexec.MockRunner{
 		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
-			// defaults read returns "1" for true
 			if name == "defaults" && args[0] == "read" {
 				return []byte("1"), nil
 			}
@@ -53,7 +52,7 @@ func TestDarwinDefaults_SkipWhenValueMatches_Bool(t *testing.T) {
 
 	assert.Equal(t, StatusSkipped, result.Status)
 	assert.Contains(t, result.Message, "already configured")
-	// Should only read, not write
+
 	assert.Len(t, runner.Calls, 1)
 	assert.Equal(t, "defaults", runner.Calls[0].Name)
 	assert.Equal(t, []string{"read", "com.apple.finder", "AppleShowAllFiles"}, runner.Calls[0].Args)
@@ -63,7 +62,6 @@ func TestDarwinDefaults_WriteWhenValueDiffers_Bool(t *testing.T) {
 	runner := &cmdexec.MockRunner{
 		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			if name == "defaults" && args[0] == "read" {
-				// Current value is false (0)
 				return []byte("0"), nil
 			}
 			return nil, nil
@@ -82,7 +80,7 @@ func TestDarwinDefaults_WriteWhenValueDiffers_Bool(t *testing.T) {
 
 	assert.Equal(t, StatusDone, result.Status)
 	assert.Contains(t, result.Message, "configured 1")
-	// Should read and write
+
 	assert.Len(t, runner.Calls, 2)
 	assert.Equal(t, "defaults", runner.Calls[0].Name)
 	assert.Equal(t, []string{"read", "com.apple.finder", "AppleShowAllFiles"}, runner.Calls[0].Args)
@@ -94,7 +92,6 @@ func TestDarwinDefaults_WriteWhenKeyNotSet(t *testing.T) {
 	runner := &cmdexec.MockRunner{
 		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			if name == "defaults" && args[0] == "read" {
-				// Key doesn't exist
 				return nil, errors.New("defaults read failed")
 			}
 			return nil, nil
@@ -113,7 +110,7 @@ func TestDarwinDefaults_WriteWhenKeyNotSet(t *testing.T) {
 
 	assert.Equal(t, StatusDone, result.Status)
 	assert.Contains(t, result.Message, "configured 1")
-	// Should attempt read and then write
+
 	assert.Len(t, runner.Calls, 2)
 }
 
@@ -184,7 +181,6 @@ func TestDarwinDefaults_AllTypes(t *testing.T) {
 			assert.Equal(t, StatusDone, result.Status)
 			assert.Len(t, runner.Calls, 2)
 
-			// Check write call
 			writeCall := runner.Calls[1]
 			assert.Equal(t, "defaults", writeCall.Name)
 			assert.Equal(t, "write", writeCall.Args[0])
@@ -251,8 +247,7 @@ func TestDarwinDefaults_MultipleEntries(t *testing.T) {
 		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			if name == "defaults" && args[0] == "read" {
 				callCount++
-				// First two reads return different values (need write)
-				// Third read returns matching value (skip)
+
 				if callCount <= 2 {
 					return []byte("0"), nil
 				}
@@ -268,7 +263,7 @@ func TestDarwinDefaults_MultipleEntries(t *testing.T) {
 		Entries: []DefaultsEntry{
 			{Domain: "test", Key: "key1", Type: "bool", Value: true},
 			{Domain: "test", Key: "key2", Type: "int", Value: 42},
-			{Domain: "test", Key: "key3", Type: "bool", Value: true}, // Already set
+			{Domain: "test", Key: "key3", Type: "bool", Value: true},
 		},
 	}
 
@@ -277,7 +272,7 @@ func TestDarwinDefaults_MultipleEntries(t *testing.T) {
 	assert.Equal(t, StatusDone, result.Status)
 	assert.Contains(t, result.Message, "configured 2")
 	assert.Contains(t, result.Message, "1 already set")
-	// 3 reads + 2 writes = 5 calls
+
 	assert.Len(t, runner.Calls, 5)
 }
 
@@ -364,10 +359,7 @@ func TestDarwinDefaults_Name(t *testing.T) {
 	}
 }
 
-// Factory tests
-
 func TestNewDarwinDefaultsFactory_ValidFile(t *testing.T) {
-	// Create a temporary defaults file
 	dir := t.TempDir()
 	defaultsFile := filepath.Join(dir, "defaults.yaml")
 	content := `defaults:
@@ -407,7 +399,6 @@ func TestNewDarwinDefaultsFactory_ValidFile(t *testing.T) {
 }
 
 func TestNewDarwinDefaultsFactory_AbsolutePath(t *testing.T) {
-	// Create a temporary defaults file
 	dir := t.TempDir()
 	defaultsFile := filepath.Join(dir, "defaults.yaml")
 	content := `defaults:
@@ -421,11 +412,11 @@ func TestNewDarwinDefaultsFactory_AbsolutePath(t *testing.T) {
 	factory := NewDarwinDefaultsFactory(DarwinDefaultsConfig{
 		Runner:    &cmdexec.MockRunner{},
 		OS:        "darwin",
-		ConfigDir: "/some/other/dir", // Should be ignored for absolute path
+		ConfigDir: "/some/other/dir",
 	})
 
 	args := map[string]any{
-		"file": defaultsFile, // Absolute path
+		"file": defaultsFile,
 	}
 
 	tasks, err := factory(args)
@@ -551,12 +542,10 @@ func TestNewDarwinDefaultsFactory_MissingRequiredFields(t *testing.T) {
 }
 
 func TestNewDarwinDefaultsFactory_ValidationErrorIndex(t *testing.T) {
-	// Tests ARITHMETIC_BASE mutations: i+1 vs i-1 in error messages
-	// Error messages must show 1-indexed entry numbers
 	tests := []struct {
 		name          string
 		content       string
-		expectedIndex string // The exact index that should appear in error
+		expectedIndex string
 	}{
 		{
 			name: "first entry missing domain shows entry 1",
@@ -695,17 +684,13 @@ func TestDarwinDefaults_NormalizeValue(t *testing.T) {
 }
 
 func TestDarwinDefaults_NormalizeValue_BoolStringEdgeCases(t *testing.T) {
-	// Test that ONLY "false" and "0" normalize to "0", not other strings
-	// This kills mutation: if lower == "false" || lower == "0" → negation
 	task := &DarwinDefaults{}
 
-	// These should normalize to "0"
 	assert.Equal(t, "0", task.normalizeValue("bool", "false"))
 	assert.Equal(t, "0", task.normalizeValue("bool", "0"))
 	assert.Equal(t, "0", task.normalizeValue("bool", "FALSE"))
 	assert.Equal(t, "0", task.normalizeValue("bool", "False"))
 
-	// These should normalize to "1"
 	assert.Equal(t, "1", task.normalizeValue("bool", "true"))
 	assert.Equal(t, "1", task.normalizeValue("bool", "1"))
 

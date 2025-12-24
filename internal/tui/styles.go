@@ -3,29 +3,24 @@ package tui
 import "github.com/charmbracelet/lipgloss"
 
 var (
-	// Colors
 	green  = lipgloss.Color("#00FF00")
 	yellow = lipgloss.Color("#FFFF00")
 	red    = lipgloss.Color("#FF0000")
 	cyan   = lipgloss.Color("#00FFFF")
 	gray   = lipgloss.Color("#808080")
 
-	// Focus colors for panel borders
-	FocusedBorderColor   = lipgloss.Color("14") // Cyan
-	UnfocusedBorderColor = lipgloss.Color("8")  // Gray
+	FocusedBorderColor   = lipgloss.Color("14")
+	UnfocusedBorderColor = lipgloss.Color("8")
 
-	// Selection highlight style - reverse video effect for selected row
 	selectedRowStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("237")). // Dark gray background
+				Background(lipgloss.Color("237")).
 				Bold(true)
 
-	// Title style
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(cyan).
 			MarginBottom(1)
 
-	// Task status styles
 	doneStyle = lipgloss.NewStyle().
 			Foreground(green)
 
@@ -42,7 +37,6 @@ var (
 	failedStyle = lipgloss.NewStyle().
 			Foreground(red)
 
-	// Leader dots style - used for dotted leaders between task name and status
 	leaderStyle = lipgloss.NewStyle().
 			Foreground(gray).
 			Faint(true)
@@ -51,7 +45,6 @@ var (
 			Foreground(gray).
 			MarginTop(1)
 
-	// Output section styles
 	outputHeaderStyle = lipgloss.NewStyle().
 				Bold(true).
 				Foreground(cyan).
@@ -65,7 +58,6 @@ var (
 				Foreground(gray).
 				PaddingLeft(2)
 
-	// Streaming log styles
 	logHeaderStyle = lipgloss.NewStyle().
 			Foreground(gray).
 			MarginTop(1)
@@ -74,7 +66,6 @@ var (
 			Foreground(gray).
 			PaddingLeft(2)
 
-	// Progress bar styles
 	progressFilledStyle = lipgloss.NewStyle().
 				Foreground(cyan)
 
@@ -85,7 +76,6 @@ var (
 	progressTextStyle = lipgloss.NewStyle().
 				Foreground(cyan)
 
-	// Failure box styles
 	failureBoxStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(red).
@@ -115,7 +105,6 @@ var (
 				PaddingLeft(2).
 				Faint(true)
 
-	// Summary screen styles
 	summaryBoxStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			Padding(1, 2).
@@ -141,7 +130,6 @@ var (
 				Foreground(gray).
 				Faint(true)
 
-	// App container style - wraps entire TUI
 	appContainerStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(lipgloss.Color("240")).

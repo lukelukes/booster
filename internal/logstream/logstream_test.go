@@ -55,18 +55,15 @@ func TestChannelWriter_PartialLine(t *testing.T) {
 func TestChannelWriter_Close_FlushesRemaining(t *testing.T) {
 	w, ch := NewChannelWriter(10)
 
-	// Write without newline
 	_, err := w.Write([]byte("no newline"))
 	require.NoError(t, err)
 
-	// Close should flush
 	err = w.Close()
 	require.NoError(t, err)
 
 	line := <-ch
 	assert.Equal(t, "no newline", line)
 
-	// Channel should be closed
 	_, ok := <-ch
 	assert.False(t, ok, "channel should be closed")
 }
@@ -75,7 +72,7 @@ func TestChannelWriter_Close_Idempotent(t *testing.T) {
 	w, _ := NewChannelWriter(10)
 
 	require.NoError(t, w.Close())
-	require.NoError(t, w.Close()) // Should not panic or error
+	require.NoError(t, w.Close())
 }
 
 func TestChannelWriter_WriteAfterClose(t *testing.T) {
@@ -89,10 +86,8 @@ func TestChannelWriter_WriteAfterClose(t *testing.T) {
 func TestContextWriter(t *testing.T) {
 	ctx := context.Background()
 
-	// No writer set
 	assert.Nil(t, Writer(ctx))
 
-	// With writer
 	var buf bytes.Buffer
 	ctx = WithWriter(ctx, &buf)
 	w := Writer(ctx)
@@ -138,7 +133,6 @@ func TestChannelWriter_ConcurrentWrites(t *testing.T) {
 	w, ch := NewChannelWriter(1000)
 	var wg sync.WaitGroup
 
-	// Spawn 100 goroutines writing concurrently
 	for i := range 100 {
 		wg.Add(1)
 		go func(n int) {
@@ -148,13 +142,11 @@ func TestChannelWriter_ConcurrentWrites(t *testing.T) {
 		}(i)
 	}
 
-	// Close after all writes complete
 	go func() {
 		wg.Wait()
 		w.Close()
 	}()
 
-	// Drain channel and count
 	count := 0
 	for range ch {
 		count++
@@ -194,7 +186,7 @@ func TestLog(t *testing.T) {
 
 	t.Run("silent when no writer", func(t *testing.T) {
 		ctx := context.Background()
-		// Should not panic
+
 		Log(ctx, "ignored")
 	})
 

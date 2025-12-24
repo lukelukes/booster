@@ -51,34 +51,28 @@ func (r *Resolver) Resolve(defs []Definition) (map[string]string, error) {
 		return nil, err
 	}
 
-	// Track which variables need prompting
 	var needsPrompt []Definition
 
 	for _, def := range defs {
-		// 1. Check environment
 		if val := r.envLookup(def.Name); val != "" {
 			result[def.Name] = val
 			continue
 		}
 
-		// 2. Check stored values
 		if val, ok := stored[def.Name]; ok {
 			result[def.Name] = val
 			continue
 		}
 
-		// 3. Need to prompt
 		needsPrompt = append(needsPrompt, def)
 	}
 
-	// Prompt for missing values if any
 	if len(needsPrompt) > 0 && r.collector != nil {
 		prompted, err := r.collector.Collect(needsPrompt)
 		if err != nil {
 			return nil, err
 		}
 
-		// Apply prompted values (with default fallback)
 		for _, def := range needsPrompt {
 			val := prompted[def.Name]
 			if val == "" && def.Default != "" {
@@ -86,11 +80,9 @@ func (r *Resolver) Resolve(defs []Definition) (map[string]string, error) {
 			}
 			result[def.Name] = val
 
-			// Save prompted value for next time
 			stored[def.Name] = val
 		}
 
-		// Persist newly prompted values
 		if err := r.store.Save(stored); err != nil {
 			return nil, err
 		}

@@ -351,17 +351,16 @@ func TestRenderStatLine_Alignment(t *testing.T) {
 	assert.Contains(t, failedLine, "failed", "Should contain failed label")
 
 	extractMiddle := func(s string) string {
-		// For simplicity, extract the substring between first space+digit and last space+digit+%
 		start := strings.Index(s, " ")
 		if start == -1 {
 			return ""
 		}
-		// Find the percentage at the end
+
 		pctIdx := strings.Index(s, "%")
 		if pctIdx == -1 {
 			return ""
 		}
-		// Work backwards from % to find the start of the percentage number
+
 		i := pctIdx - 1
 		for i >= 0 && (s[i] >= '0' && s[i] <= '9' || s[i] == ' ') {
 			i--
@@ -373,8 +372,6 @@ func TestRenderStatLine_Alignment(t *testing.T) {
 	skippedMiddle := extractMiddle(skippedLine)
 	failedMiddle := extractMiddle(failedLine)
 
-	// All middle sections should have the same length since labels are padded
-	// This ensures progress bars start at the same column
 	require.NotEmpty(t, completedMiddle, "Should extract middle section from completed line")
 	require.NotEmpty(t, skippedMiddle, "Should extract middle section from skipped line")
 	require.NotEmpty(t, failedMiddle, "Should extract middle section from failed line")
@@ -391,7 +388,6 @@ func TestRenderStatLine_Alignment(t *testing.T) {
 		completedMiddle, failedMiddle)
 }
 
-// TestRenderStatistics_Alignment verifies that statistics section has aligned progress bars.
 func TestRenderStatistics_Alignment(t *testing.T) {
 	data := SummaryData{
 		Done:    12,
@@ -403,7 +399,6 @@ func TestRenderStatistics_Alignment(t *testing.T) {
 	result := renderStatistics(data)
 	lines := strings.Split(result, "\n")
 
-	// Extract the section from each stat line (between count and percentage)
 	extractMiddle := func(s string) string {
 		start := strings.Index(s, " ")
 		if start == -1 {
@@ -413,7 +408,7 @@ func TestRenderStatistics_Alignment(t *testing.T) {
 		if pctIdx == -1 {
 			return ""
 		}
-		// Work backwards from % to find the start of the percentage number
+
 		i := pctIdx - 1
 		for i >= 0 && (s[i] >= '0' && s[i] <= '9' || s[i] == ' ') {
 			i--
@@ -423,7 +418,6 @@ func TestRenderStatistics_Alignment(t *testing.T) {
 
 	var middleSections []string
 	for _, line := range lines {
-		// Skip header/separator lines
 		if strings.Contains(line, "Summary") || strings.Contains(line, "─") {
 			continue
 		}
@@ -433,10 +427,8 @@ func TestRenderStatistics_Alignment(t *testing.T) {
 		}
 	}
 
-	// Should have exactly 3 stat lines (completed, skipped, failed)
 	require.Len(t, middleSections, 3, "Should have 3 stat lines")
 
-	// All middle sections should have the same length
 	firstLen := len(middleSections[0])
 	for i := 1; i < len(middleSections); i++ {
 		assert.Len(t, middleSections[i], firstLen,
@@ -445,7 +437,6 @@ func TestRenderStatistics_Alignment(t *testing.T) {
 	}
 }
 
-// TestSummaryData_Integration verifies complete integration scenarios.
 func TestSummaryData_Integration(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -523,10 +523,9 @@ func TestGitConfig_ErrorOutputNoLeadingNewline(t *testing.T) {
 	runner := &cmdexec.MockRunner{
 		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			if name == "git" && args[2] == "--get" {
-				// Key doesn't exist
 				return nil, errors.New("not found")
 			}
-			// git config set fails
+
 			return []byte("error output"), errors.New("permission denied")
 		},
 	}
@@ -542,14 +541,12 @@ func TestGitConfig_ErrorOutputNoLeadingNewline(t *testing.T) {
 	result := task.Run(context.Background())
 
 	assert.Equal(t, StatusFailed, result.Status)
-	// Output should NOT start with newline (no previous output)
+
 	assert.False(t, len(result.Output) > 0 && result.Output[0] == '\n',
 		"output should not start with newline when there's no previous output")
 }
 
 func TestNewGitConfig_ErrorIndexFirstArg(t *testing.T) {
-	// Tests ARITHMETIC_BASE mutation: i+1 vs i-1
-	// Error for first arg should show "arg 1", not "arg 0" or "arg -1"
 	factory := NewGitConfig(&cmdexec.MockRunner{}, &MockPrompter{})
 
 	args := []any{
@@ -566,7 +563,6 @@ func TestNewGitConfig_ErrorIndexFirstArg(t *testing.T) {
 }
 
 func TestNewGitConfig_ErrorIndexSecondArg(t *testing.T) {
-	// Tests ARITHMETIC_BASE mutation at different indices
 	factory := NewGitConfig(&cmdexec.MockRunner{}, &MockPrompter{})
 
 	args := []any{

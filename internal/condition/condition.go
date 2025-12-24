@@ -22,7 +22,6 @@ func NewEvaluator(ctx Context) *Evaluator {
 	return &Evaluator{ctx: ctx}
 }
 
-// A nil or empty condition always matches.
 func (e *Evaluator) Matches(c *Condition) bool {
 	if c == nil {
 		return true
@@ -39,8 +38,6 @@ func (e *Evaluator) Matches(c *Condition) bool {
 	return true
 }
 
-// FailureReason returns a human-readable reason why the condition failed.
-// Returns empty string if condition matches.
 func (e *Evaluator) FailureReason(c *Condition) string {
 	if c == nil || e.Matches(c) {
 		return ""

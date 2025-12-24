@@ -620,7 +620,7 @@ func TestNewPkgInstallFactory_ErrorIndices(t *testing.T) {
 		{
 			name: "first arg bad type shows arg 1",
 			args: []any{
-				123, // invalid type
+				123,
 			},
 			expectedIndex: "arg 1:",
 		},
@@ -628,7 +628,7 @@ func TestNewPkgInstallFactory_ErrorIndices(t *testing.T) {
 			name: "second arg bad type shows arg 2",
 			args: []any{
 				"valid-package",
-				456, // invalid type
+				456,
 			},
 			expectedIndex: "arg 2:",
 		},
@@ -636,7 +636,7 @@ func TestNewPkgInstallFactory_ErrorIndices(t *testing.T) {
 			name: "packages list first item not string shows index 0",
 			args: []any{
 				map[string]any{
-					"packages": []any{123}, // not string
+					"packages": []any{123},
 				},
 			},
 			expectedIndex: "[0]:",
@@ -678,9 +678,6 @@ func TestNewPkgInstallFactory_SetsOSFromConfig(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 
-	// Verify OS propagation by testing cask behavior:
-	// On non-darwin OS, casks should fail - but this task has no casks
-	// so we verify the task was created and can run successfully
 	result := tasks[0].Run(context.Background())
 	assert.Equal(t, StatusDone, result.Status, "task should execute on manjaro")
 }
@@ -688,12 +685,10 @@ func TestNewPkgInstallFactory_SetsOSFromConfig(t *testing.T) {
 func TestNewPkgInstallFactory_CreatesDefaultManager(t *testing.T) {
 	args := []any{"git"}
 
-	// No manager provided - should create PacmanManager
-	// Inject a mock runner to verify paru is called (default helper for PacmanManager)
 	mockRunner := &cmdexec.MockRunner{
 		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			if name == "pacman" {
-				return []byte("git\n"), nil // git already installed
+				return []byte("git\n"), nil
 			}
 			return []byte("ok"), nil
 		},
@@ -709,11 +704,9 @@ func TestNewPkgInstallFactory_CreatesDefaultManager(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 
-	// Test through behavior: run the task and verify it uses pacman/paru
 	result := tasks[0].Run(context.Background())
 	assert.Equal(t, StatusSkipped, result.Status, "git is already installed in mock")
 
-	// Verify pacman was called (ListInstalled uses pacman -Qq)
 	var pacmanCalled bool
 	for _, call := range mockRunner.Calls {
 		if call.Name == "pacman" {
@@ -727,17 +720,15 @@ func TestNewPkgInstallFactory_CreatesDefaultManager(t *testing.T) {
 func TestNewPkgInstallFactory_CreatesHomebrewManagerOnDarwin(t *testing.T) {
 	args := []any{"git"}
 
-	// No manager provided + darwin OS - should create HomebrewManager
 	mockRunner := &cmdexec.MockRunner{
 		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			if name == "brew" {
-				return []byte("git\n"), nil // git already installed
+				return []byte("git\n"), nil
 			}
 			return []byte("ok"), nil
 		},
 	}
 
-	// Mock PathFinder to return consistent "brew" path for testing
 	mockPathFinder := func() (string, bool) {
 		return "brew", true
 	}
@@ -753,11 +744,9 @@ func TestNewPkgInstallFactory_CreatesHomebrewManagerOnDarwin(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 
-	// Test through behavior: run the task and verify it uses brew
 	result := tasks[0].Run(context.Background())
 	assert.Equal(t, StatusSkipped, result.Status, "git is already installed in mock")
 
-	// Verify brew was called (ListInstalled uses brew list --formulae)
 	var brewCalled bool
 	for _, call := range mockRunner.Calls {
 		if call.Name == "brew" {

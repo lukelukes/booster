@@ -308,7 +308,6 @@ type installStats struct {
 func (t *PkgInstall) performInstallation(ctx context.Context, packages, casks []string) Result {
 	var allOutput strings.Builder
 
-	// Install packages in batch
 	if len(packages) > 0 {
 		output, err := t.Manager.Install(ctx, packages)
 		if output != "" {
@@ -319,7 +318,6 @@ func (t *PkgInstall) performInstallation(ctx context.Context, packages, casks []
 		}
 	}
 
-	// Install casks in batch
 	if len(casks) > 0 {
 		output, err := t.Manager.InstallCasks(ctx, casks)
 		if output != "" {
@@ -333,7 +331,6 @@ func (t *PkgInstall) performInstallation(ctx context.Context, packages, casks []
 		}
 	}
 
-	// Build result message with full stats
 	stats := installStats{
 		totalPkgs:      len(t.Packages),
 		installedPkgs:  len(packages),
@@ -344,7 +341,6 @@ func (t *PkgInstall) performInstallation(ctx context.Context, packages, casks []
 	return Result{Status: StatusDone, Message: msg, Output: allOutput.String()}
 }
 
-// buildResultMessage constructs a human-readable message about what was installed.
 func (t *PkgInstall) buildResultMessage(stats installStats) string {
 	var parts []string
 
@@ -360,7 +356,6 @@ func (t *PkgInstall) buildResultMessage(stats installStats) string {
 	return strings.Join(parts, " | ")
 }
 
-// formatInstallStats formats a single category's install statistics.
 func formatInstallStats(category string, skipped, installed int) string {
 	plural := "s"
 	if skipped == 1 && installed == 0 {
@@ -375,30 +370,13 @@ func formatInstallStats(category string, skipped, installed int) string {
 	return fmt.Sprintf("%d %s%s installed", installed, category, plural)
 }
 
-// PkgInstallConfig holds the factory configuration.
 type PkgInstallConfig struct {
 	Runner     cmdexec.Runner
 	Manager    PackageManager
 	OS         string
-	PathFinder BrewPathFinder // Optional: for testing brew path discovery
+	PathFinder BrewPathFinder
 }
 
-// NewPkgInstallFactory creates a factory for PkgInstall tasks.
-// The factory parses two YAML formats:
-//
-// Simple format (list of strings):
-//
-//	args:
-//	  - git
-//	  - curl
-//
-// Structured format (with packages and casks):
-//
-//	args:
-//	  - packages:
-//	      - git
-//	  - casks:
-//	      - firefox
 func NewPkgInstallFactory(cfg PkgInstallConfig) Factory {
 	return func(args any) ([]Task, error) {
 		packages, casks, err := parsePkgInstallArgs(args)
@@ -410,7 +388,6 @@ func NewPkgInstallFactory(cfg PkgInstallConfig) Factory {
 			return nil, nil
 		}
 
-		// Use provided manager or create default based on OS
 		manager := cfg.Manager
 		if manager == nil {
 			if cfg.OS == "darwin" {
@@ -429,7 +406,6 @@ func NewPkgInstallFactory(cfg PkgInstallConfig) Factory {
 	}
 }
 
-// parsePkgInstallArgs handles both simple and structured YAML formats.
 func parsePkgInstallArgs(args any) (packages, casks []string, err error) {
 	list, ok := args.([]any)
 	if !ok {
@@ -439,11 +415,11 @@ func parsePkgInstallArgs(args any) (packages, casks []string, err error) {
 	for i, item := range list {
 		switch v := item.(type) {
 		case string:
-			// Simple format: item is a package name
+
 			packages = append(packages, v)
 
 		case map[string]any:
-			// Structured format: item has "packages" and/or "casks" keys
+
 			if pkgs, ok := v["packages"]; ok {
 				parsed, err := parseStringList(pkgs, fmt.Sprintf("arg %d packages", i+1))
 				if err != nil {
@@ -467,7 +443,6 @@ func parsePkgInstallArgs(args any) (packages, casks []string, err error) {
 	return packages, casks, nil
 }
 
-// parseStringList converts []interface{} to []string.
 func parseStringList(v any, context string) ([]string, error) {
 	list, ok := v.([]any)
 	if !ok {

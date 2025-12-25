@@ -127,8 +127,26 @@ func (v *Value) MustResolve(ctx *Context) any {
 }
 
 func ResolveCondition(when *Value, ctx *Context) (bool, error) {
-	// TODO: Implement this
-	panic("not implemented")
+	// nil or empty string means "always run"
+	if when == nil {
+		return true, nil
+	}
+	if when.IsLiteral() {
+		if s, ok := when.raw.(string); ok && s == "" {
+			return true, nil
+		}
+	}
+
+	result, err := when.Resolve(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	b, ok := result.(bool)
+	if !ok {
+		return false, fmt.Errorf("condition must evaluate to bool, got %T", result)
+	}
+	return b, nil
 }
 
 func (v *Value) String() string {

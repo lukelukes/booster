@@ -1,8 +1,10 @@
 package expr
 
 import (
+	"maps"
 	"os"
 	"runtime"
+	"strings"
 )
 
 type Context struct {
@@ -36,30 +38,41 @@ func NewContext() *Context {
 }
 
 func (c *Context) WithProfile(profile string) *Context {
-	cp := *c
+	cp := c.clone()
 	cp.Profile = profile
-	return &cp
+	return cp
 }
 
 func (c *Context) WithVars(vars map[string]any) *Context {
-	cp := *c
+	cp := c.clone()
 	cp.Vars = vars
-	return &cp
+	return cp
 }
 
 func (c *Context) SetTaskResult(name string, output any, status string) {
 	c.Tasks[name] = TaskResult{Output: output, Status: status}
 }
 
+func (c *Context) clone() *Context {
+	cp := *c
+
+	cp.Env = make(map[string]string, len(c.Env))
+	maps.Copy(cp.Env, c.Env)
+
+	cp.Vars = make(map[string]any, len(c.Vars))
+	maps.Copy(cp.Vars, c.Vars)
+
+	cp.Tasks = make(map[string]TaskResult, len(c.Tasks))
+	maps.Copy(cp.Tasks, c.Tasks)
+
+	return &cp
+}
+
 func envToMap() map[string]string {
 	env := make(map[string]string)
 	for _, e := range os.Environ() {
-		for i := 0; i < len(e); i++ {
-			if e[i] == '=' {
-				env[e[:i]] = e[i+1:]
-				break
-			}
-		}
+		k, v, _ := strings.Cut(e, "=")
+		env[k] = v
 	}
 	return env
 }

@@ -2,14 +2,11 @@ package expr
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/vm"
 )
-
-var exprPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
 
 type Value struct {
 	raw any
@@ -58,21 +55,20 @@ func NewValue(raw any) (*Value, error) {
 
 func parseInterpolated(s string) ([]part, error) {
 	var parts []part
-	lastEnd := 0
+	exprs := findExpressions(s)
 
-	matches := exprPattern.FindAllStringSubmatchIndex(s, -1)
-	for _, match := range matches {
-		if match[0] > lastEnd {
-			parts = append(parts, part{literal: s[lastEnd:match[0]]})
+	lastEnd := 0
+	for _, e := range exprs {
+		if e.start > lastEnd {
+			parts = append(parts, part{literal: s[lastEnd:e.start]})
 		}
 
-		exprStr := s[match[2]:match[3]]
-		program, err := expr.Compile(exprStr, CompileOptions()...)
+		program, err := expr.Compile(e.inner, CompileOptions()...)
 		if err != nil {
-			return nil, fmt.Errorf("invalid expression %q: %w", exprStr, err)
+			return nil, fmt.Errorf("invalid expression %q: %w", e.inner, err)
 		}
 		parts = append(parts, part{program: program})
-		lastEnd = match[1]
+		lastEnd = e.end
 	}
 
 	if lastEnd < len(s) {
@@ -80,6 +76,62 @@ func parseInterpolated(s string) ([]part, error) {
 	}
 
 	return parts, nil
+}
+
+type exprSpan struct {
+	start int
+	end   int
+	inner string
+}
+
+func findExpressions(s string) []exprSpan {
+	var spans []exprSpan
+	i := 0
+
+	for i < len(s)-1 {
+		if s[i] == '$' && s[i+1] == '{' {
+			start := i
+			i += 2
+
+			depth := 1
+			exprStart := i
+
+			for i < len(s) && depth > 0 {
+				switch s[i] {
+				case '{':
+					depth++
+				case '}':
+					depth--
+				case '"', '\'':
+					quote := s[i]
+					i++
+					for i < len(s) && s[i] != quote {
+						if s[i] == '\\' && i+1 < len(s) {
+							i++
+						}
+						i++
+					}
+				}
+				if depth > 0 {
+					i++
+				}
+			}
+
+			if depth == 0 {
+				inner := strings.TrimSpace(s[exprStart:i])
+				spans = append(spans, exprSpan{
+					start: start,
+					end:   i + 1,
+					inner: inner,
+				})
+			}
+			i++
+		} else {
+			i++
+		}
+	}
+
+	return spans
 }
 
 func (v *Value) IsLiteral() bool {
@@ -127,7 +179,6 @@ func (v *Value) MustResolve(ctx *Context) any {
 }
 
 func ResolveCondition(when *Value, ctx *Context) (bool, error) {
-	// nil or empty string means "always run"
 	if when == nil {
 		return true, nil
 	}

@@ -10,7 +10,6 @@ import (
 	"github.com/expr-lang/expr"
 )
 
-// CompileOptions returns expr options with built-in functions registered.
 func CompileOptions() []expr.Option {
 	return []expr.Option{
 		expr.Env(&Context{}),
@@ -38,8 +37,6 @@ func CompileOptions() []expr.Option {
 	}
 }
 
-// exists checks if a file or directory exists.
-// Usage: exists("~/.config/nvim")
 func existsFunc(params ...any) (any, error) {
 	if len(params) != 1 {
 		return nil, fmt.Errorf("exists: expected 1 argument, got %d", len(params))
@@ -53,8 +50,6 @@ func existsFunc(params ...any) (any, error) {
 	return err == nil, nil
 }
 
-// which returns the path to an executable, or empty string if not found.
-// Usage: which("nvim")
 func whichFunc(params ...any) (any, error) {
 	if len(params) != 1 {
 		return nil, fmt.Errorf("which: expected 1 argument, got %d", len(params))
@@ -70,8 +65,6 @@ func whichFunc(params ...any) (any, error) {
 	return path, nil
 }
 
-// installed checks if a command is available in PATH.
-// Usage: installed("git")
 func installedFunc(params ...any) (any, error) {
 	if len(params) != 1 {
 		return nil, fmt.Errorf("installed: expected 1 argument, got %d", len(params))
@@ -84,8 +77,6 @@ func installedFunc(params ...any) (any, error) {
 	return err == nil, nil
 }
 
-// default returns the first non-nil/non-empty value.
-// Usage: default(vars.editor, "vim")
 func defaultFunc(params ...any) (any, error) {
 	if len(params) != 2 {
 		return nil, fmt.Errorf("default: expected 2 arguments, got %d", len(params))
@@ -100,8 +91,6 @@ func defaultFunc(params ...any) (any, error) {
 	return val, nil
 }
 
-// expand expands ~ and environment variables in a path.
-// Usage: expand("~/.config")
 func expandFunc(params ...any) (any, error) {
 	if len(params) != 1 {
 		return nil, fmt.Errorf("expand: expected 1 argument, got %d", len(params))
@@ -113,8 +102,6 @@ func expandFunc(params ...any) (any, error) {
 	return expandPath(path), nil
 }
 
-// containsStrFunc checks if a string contains a substring.
-// Usage: contains("hello world", "world")
 func containsStrFunc(params ...any) (any, error) {
 	if len(params) != 2 {
 		return nil, fmt.Errorf("contains: expected 2 arguments, got %d", len(params))
@@ -130,8 +117,6 @@ func containsStrFunc(params ...any) (any, error) {
 	return strings.Contains(haystack, needle), nil
 }
 
-// join concatenates list elements with a separator.
-// Usage: join(packages, ", ")
 func joinFunc(params ...any) (any, error) {
 	if len(params) != 2 {
 		return nil, fmt.Errorf("join: expected 2 arguments, got %d", len(params))
@@ -151,12 +136,7 @@ func joinFunc(params ...any) (any, error) {
 	return strings.Join(strs, sep), nil
 }
 
-// expandPath expands ~ to home directory and environment variables.
 func expandPath(path string) string {
-	if path == "~" {
-		home, _ := os.UserHomeDir()
-		return home
-	}
 	if strings.HasPrefix(path, "~/") {
 		home, _ := os.UserHomeDir()
 		path = filepath.Join(home, path[2:])

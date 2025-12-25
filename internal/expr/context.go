@@ -1,8 +1,10 @@
 package expr
 
 import (
+	"maps"
 	"os"
 	"runtime"
+	"strings"
 )
 
 // Context holds all values available during expression evaluation.
@@ -46,33 +48,51 @@ func NewContext() *Context {
 }
 
 // WithProfile returns a copy of the context with the profile set.
+// The returned context has its own copies of all maps to prevent mutation issues.
 func (c *Context) WithProfile(profile string) *Context {
-	cp := *c
+	cp := c.clone()
 	cp.Profile = profile
-	return &cp
+	return cp
 }
 
 // WithVars returns a copy of the context with variables set.
+// The returned context has its own copies of all maps to prevent mutation issues.
 func (c *Context) WithVars(vars map[string]any) *Context {
-	cp := *c
+	cp := c.clone()
 	cp.Vars = vars
-	return &cp
+	return cp
 }
 
 // SetTaskResult records the result of a completed task.
+// Note: This mutates the context in place. Use clone() first if you need isolation.
 func (c *Context) SetTaskResult(name string, output any, status string) {
 	c.Tasks[name] = TaskResult{Output: output, Status: status}
+}
+
+// clone creates a deep copy of the context with independent maps.
+func (c *Context) clone() *Context {
+	cp := *c
+
+	// Deep copy Env map
+	cp.Env = make(map[string]string, len(c.Env))
+	maps.Copy(cp.Env, c.Env)
+
+	// Deep copy Vars map
+	cp.Vars = make(map[string]any, len(c.Vars))
+	maps.Copy(cp.Vars, c.Vars)
+
+	// Deep copy Tasks map
+	cp.Tasks = make(map[string]TaskResult, len(c.Tasks))
+	maps.Copy(cp.Tasks, c.Tasks)
+
+	return &cp
 }
 
 func envToMap() map[string]string {
 	env := make(map[string]string)
 	for _, e := range os.Environ() {
-		for i := 0; i < len(e); i++ {
-			if e[i] == '=' {
-				env[e[:i]] = e[i+1:]
-				break
-			}
-		}
+		k, v, _ := strings.Cut(e, "=")
+		env[k] = v
 	}
 	return env
 }

@@ -307,3 +307,113 @@ func TestValue_InvalidExpression(t *testing.T) {
 		})
 	}
 }
+
+func TestValue_ExistsFunction(t *testing.T) {
+	ctx := NewContext()
+
+	tests := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{
+			"existing directory",
+			`${ exists("/tmp") }`,
+			true,
+		},
+		{
+			"existing file",
+			`${ exists("/etc/passwd") }`,
+			true,
+		},
+		{
+			"non-existent path",
+			`${ exists("/definitely/not/a/real/path/12345") }`,
+			false,
+		},
+		{
+			"tilde expansion",
+			`${ exists("~") }`,
+			true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v, err := NewValue(tt.raw)
+			require.NoError(t, err)
+
+			got, err := v.Resolve(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestValue_NestedBraces(t *testing.T) {
+	ctx := NewContext()
+
+	tests := []struct {
+		name string
+		raw  string
+		want any
+	}{
+		{
+			"map literal access",
+			`${ {"foo": "bar"}.foo }`,
+			"bar",
+		},
+		{
+			"map in list",
+			`${ [{"a": 1}, {"b": 2}][0].a }`,
+			1,
+		},
+		{
+			"nested map",
+			`${ {"outer": {"inner": "value"}}.outer.inner }`,
+			"value",
+		},
+		{
+			"interpolated with map",
+			`key: ${ {"k": "v"}.k }!`,
+			"key: v!",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v, err := NewValue(tt.raw)
+			require.NoError(t, err)
+
+			got, err := v.Resolve(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestContext_CloneIsolation(t *testing.T) {
+	// Verify that WithProfile/WithVars create truly independent contexts
+	original := NewContext()
+	original.Vars["key"] = "original"
+	original.SetTaskResult("task1", "output1", "done")
+
+	// Create child contexts
+	child1 := original.WithProfile("profile1")
+	child2 := original.WithVars(map[string]any{"key": "child2"})
+
+	// Mutate child contexts
+	child1.Vars["key"] = "mutated1"
+	child1.SetTaskResult("task2", "output2", "done")
+
+	// Verify original is unchanged
+	assert.Equal(t, "original", original.Vars["key"], "original.Vars should be unchanged")
+	assert.Empty(t, original.Profile, "original.Profile should be unchanged")
+	_, hasTask2 := original.Tasks["task2"]
+	assert.False(t, hasTask2, "original.Tasks should not have task2")
+
+	// Verify children are independent
+	assert.Equal(t, "profile1", child1.Profile)
+	assert.Equal(t, "child2", child2.Vars["key"])
+	assert.Empty(t, child2.Profile, "child2 should not inherit child1's profile")
+}

@@ -153,6 +153,10 @@ func joinFunc(params ...any) (any, error) {
 
 // expandPath expands ~ to home directory and environment variables.
 func expandPath(path string) string {
+	if path == "~" {
+		home, _ := os.UserHomeDir()
+		return home
+	}
 	if strings.HasPrefix(path, "~/") {
 		home, _ := os.UserHomeDir()
 		path = filepath.Join(home, path[2:])

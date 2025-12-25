@@ -2,15 +2,11 @@ package expr
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/vm"
 )
-
-// exprPattern matches ${ ... } expressions, handling nested braces.
-var exprPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
 
 // Value represents a configuration value that may contain expressions.
 // It can be:
@@ -71,32 +67,94 @@ func NewValue(raw any) (*Value, error) {
 }
 
 // parseInterpolated splits a string into literal and expression parts.
+// Uses brace-matching to correctly handle nested braces in expressions
+// like ${ {"key": "value"}.key }.
 func parseInterpolated(s string) ([]part, error) {
 	var parts []part
-	lastEnd := 0
+	exprs := findExpressions(s)
 
-	matches := exprPattern.FindAllStringSubmatchIndex(s, -1)
-	for _, match := range matches {
-		// match[0]:match[1] is the full match ${ ... }
-		// match[2]:match[3] is the capture group (the expression)
-		if match[0] > lastEnd {
-			parts = append(parts, part{literal: s[lastEnd:match[0]]})
+	lastEnd := 0
+	for _, e := range exprs {
+		// Add literal part before this expression
+		if e.start > lastEnd {
+			parts = append(parts, part{literal: s[lastEnd:e.start]})
 		}
 
-		exprStr := s[match[2]:match[3]]
-		program, err := expr.Compile(exprStr, CompileOptions()...)
+		program, err := expr.Compile(e.inner, CompileOptions()...)
 		if err != nil {
-			return nil, fmt.Errorf("invalid expression %q: %w", exprStr, err)
+			return nil, fmt.Errorf("invalid expression %q: %w", e.inner, err)
 		}
 		parts = append(parts, part{program: program})
-		lastEnd = match[1]
+		lastEnd = e.end
 	}
 
+	// Add trailing literal if any
 	if lastEnd < len(s) {
 		parts = append(parts, part{literal: s[lastEnd:]})
 	}
 
 	return parts, nil
+}
+
+// exprSpan represents a ${ ... } expression's location in a string.
+type exprSpan struct {
+	start int    // Index of '$'
+	end   int    // Index after closing '}'
+	inner string // The expression content (without ${ })
+}
+
+// findExpressions locates all ${ ... } expressions in s, handling nested braces.
+func findExpressions(s string) []exprSpan {
+	var spans []exprSpan
+	i := 0
+
+	for i < len(s)-1 {
+		// Look for ${
+		if s[i] == '$' && s[i+1] == '{' {
+			start := i
+			i += 2 // Skip past ${
+
+			// Count braces to find matching }
+			depth := 1
+			exprStart := i
+
+			for i < len(s) && depth > 0 {
+				switch s[i] {
+				case '{':
+					depth++
+				case '}':
+					depth--
+				case '"', '\'':
+					// Skip string literals to avoid counting braces inside them
+					quote := s[i]
+					i++
+					for i < len(s) && s[i] != quote {
+						if s[i] == '\\' && i+1 < len(s) {
+							i++ // Skip escaped char
+						}
+						i++
+					}
+				}
+				if depth > 0 {
+					i++
+				}
+			}
+
+			if depth == 0 {
+				inner := strings.TrimSpace(s[exprStart:i])
+				spans = append(spans, exprSpan{
+					start: start,
+					end:   i + 1, // Include the closing }
+					inner: inner,
+				})
+			}
+			i++ // Move past closing }
+		} else {
+			i++
+		}
+	}
+
+	return spans
 }
 
 // IsLiteral returns true if this value contains no expressions.

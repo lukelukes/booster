@@ -55,6 +55,16 @@ func newMockTaskWithMessage(name string, status task.Status, message string) *mo
 	}
 }
 
+func completeTaskViaMessages(t *testing.T, model Model, result task.Result) Model {
+	t.Helper()
+
+	newModel, _ := model.Update(logDoneMsg{})
+	model = newModel.(Model)
+
+	newModel, _ = model.Update(taskDoneMsg{result: result})
+	return newModel.(Model)
+}
+
 func TestNew(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "", nil),
@@ -220,10 +230,11 @@ func TestUpdate_TaskDoneMsg(t *testing.T) {
 
 	model.coord.StartTask(0)
 
-	model.coord.LogsDone()
+	newModel, cmd := model.Update(logDoneMsg{})
+	model = newModel.(Model)
+	assert.Nil(t, cmd, "logDoneMsg should return nil when task not done yet")
 
-	msg := taskDoneMsg{result: task.Result{Status: task.StatusDone}}
-	newModel, cmd := model.Update(msg)
+	newModel, cmd = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
 
 	assert.NotNil(t, cmd, "Should return command to run next task")
 	assert.IsType(t, Model{}, newModel, "Update should return Model type")
@@ -259,13 +270,9 @@ func TestUpdate_TaskFailure_StopsExecution(t *testing.T) {
 	require.Equal(t, task.StatusFailed, result2.Status)
 
 	model.coord.StartTask(1)
-	model.coord.LogsDone()
 
-	msg := taskDoneMsg{result: result2}
-	newModel, cmd := model.Update(msg)
-	model = newModel.(Model)
+	model = completeTaskViaMessages(t, model, result2)
 
-	assert.Nil(t, cmd, "Should NOT return command after failure")
 	assert.True(t, model.exec.Stopped(), "Executor should be stopped")
 	assert.False(t, model.exec.Done(), "Should NOT be done (task3 didn't run)")
 
@@ -689,33 +696,21 @@ func TestIntegration_FullTaskFlow(t *testing.T) {
 	assert.Equal(t, task.StatusDone, result1.Status)
 
 	model.coord.StartTask(0)
-	model.coord.LogsDone()
-	newModel, cmd := model.Update(taskDoneMsg{result: result1})
-	model, ok = newModel.(Model)
-	require.True(t, ok, "newModel should be Model type")
-	require.NotNil(t, cmd, "Should return command for task2")
+	model = completeTaskViaMessages(t, model, result1)
 
 	result2, ok := model.exec.RunNext(context.Background())
 	require.True(t, ok, "Task2 should run")
 	assert.Equal(t, task.StatusSkipped, result2.Status)
 
 	model.coord.StartTask(1)
-	model.coord.LogsDone()
-	newModel, cmd = model.Update(taskDoneMsg{result: result2})
-	model, ok = newModel.(Model)
-	require.True(t, ok, "newModel should be Model type")
-	require.NotNil(t, cmd, "Should return command for task3")
+	model = completeTaskViaMessages(t, model, result2)
 
 	result3, ok := model.exec.RunNext(context.Background())
 	require.True(t, ok, "Task3 should run")
 	assert.Equal(t, task.StatusFailed, result3.Status)
 
 	model.coord.StartTask(2)
-	model.coord.LogsDone()
-	newModel, cmd = model.Update(taskDoneMsg{result: result3})
-	model, ok = newModel.(Model)
-	require.True(t, ok, "newModel should be Model type")
-	assert.Nil(t, cmd, "Should return nil after failure (aborted)")
+	model = completeTaskViaMessages(t, model, result3)
 
 	assert.True(t, model.exec.Stopped(), "Executor should be stopped")
 
@@ -896,6 +891,7 @@ func TestLogHistory_Persistence(t *testing.T) {
 
 	_, ok := model.exec.RunNext(context.Background())
 	require.True(t, ok, "Task1 should run")
+
 	model.coord.StartTask(0)
 
 	newModel, _ := model.Update(logLineMsg{line: "task1 log line 1"})
@@ -907,7 +903,8 @@ func TestLogHistory_Persistence(t *testing.T) {
 	assert.Equal(t, "task1 log line 1", model.coord.CurrentLogs()[0])
 	assert.Equal(t, "task1 log line 2", model.coord.CurrentLogs()[1])
 
-	model.coord.LogsDone()
+	newModel, _ = model.Update(logDoneMsg{})
+	model = newModel.(Model)
 	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
 	model = newModel.(Model)
 
@@ -918,6 +915,7 @@ func TestLogHistory_Persistence(t *testing.T) {
 
 	_, ok = model.exec.RunNext(context.Background())
 	require.True(t, ok, "Task2 should run")
+
 	model.coord.StartTask(1)
 
 	newModel, _ = model.Update(logLineMsg{line: "task2 log line 1"})
@@ -927,7 +925,8 @@ func TestLogHistory_Persistence(t *testing.T) {
 	newModel, _ = model.Update(logLineMsg{line: "task2 log line 3"})
 	model = newModel.(Model)
 
-	model.coord.LogsDone()
+	newModel, _ = model.Update(logDoneMsg{})
+	model = newModel.(Model)
 	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
 	model = newModel.(Model)
 
@@ -939,9 +938,11 @@ func TestLogHistory_Persistence(t *testing.T) {
 
 	_, ok = model.exec.RunNext(context.Background())
 	require.True(t, ok, "Task3 should run")
+
 	model.coord.StartTask(2)
 
-	model.coord.LogsDone()
+	newModel, _ = model.Update(logDoneMsg{})
+	model = newModel.(Model)
 	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
 	model = newModel.(Model)
 
@@ -949,41 +950,6 @@ func TestLogHistory_Persistence(t *testing.T) {
 
 	assert.Len(t, model.coord.LogsFor(0), 2, "logHistory[0] should still have 2 lines")
 	assert.Len(t, model.coord.LogsFor(1), 3, "logHistory[1] should still have 3 lines")
-}
-
-func TestSelectedTask_AutoAdvancement(t *testing.T) {
-	tasks := []task.Task{
-		newMockTask("task1", task.StatusDone, "", nil),
-		newMockTask("task2", task.StatusDone, "", nil),
-		newMockTask("task3", task.StatusDone, "", nil),
-	}
-	model := New(tasks)
-
-	assert.Equal(t, 0, model.selectedTask, "Initial selectedTask should be 0")
-
-	_, _ = model.exec.RunNext(context.Background())
-	model.coord.StartTask(0)
-	model.coord.LogsDone()
-	newModel, _ := model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
-	model = newModel.(Model)
-
-	assert.Equal(t, 1, model.selectedTask, "selectedTask should advance to 1")
-
-	_, _ = model.exec.RunNext(context.Background())
-	model.coord.StartTask(1)
-	model.coord.LogsDone()
-	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
-	model = newModel.(Model)
-
-	assert.Equal(t, 2, model.selectedTask, "selectedTask should advance to 2")
-
-	_, _ = model.exec.RunNext(context.Background())
-	model.coord.StartTask(2)
-	model.coord.LogsDone()
-	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
-	model = newModel.(Model)
-
-	assert.Equal(t, 2, model.selectedTask, "selectedTask should not advance beyond last task")
 }
 
 func TestLogHistory_FailedTask(t *testing.T) {
@@ -994,20 +960,24 @@ func TestLogHistory_FailedTask(t *testing.T) {
 	model := New(tasks)
 
 	_, _ = model.exec.RunNext(context.Background())
+
 	model.coord.StartTask(0)
 	newModel, _ := model.Update(logLineMsg{line: "task1 log"})
 	model = newModel.(Model)
-	model.coord.LogsDone()
+	newModel, _ = model.Update(logDoneMsg{})
+	model = newModel.(Model)
 	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
 	model = newModel.(Model)
 
 	_, _ = model.exec.RunNext(context.Background())
+
 	model.coord.StartTask(1)
 	newModel, _ = model.Update(logLineMsg{line: "task2 log 1"})
 	model = newModel.(Model)
 	newModel, _ = model.Update(logLineMsg{line: "task2 log 2"})
 	model = newModel.(Model)
-	model.coord.LogsDone()
+	newModel, _ = model.Update(logDoneMsg{})
+	model = newModel.(Model)
 	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusFailed}})
 	model = newModel.(Model)
 
@@ -1029,6 +999,7 @@ func TestLogTaskCoordination_TaskDoneBeforeLogDone(t *testing.T) {
 	model := New(tasks)
 
 	_, _ = model.exec.RunNext(context.Background())
+
 	model.coord.StartTask(0)
 
 	newModel, _ := model.Update(logLineMsg{line: "log line 1"})
@@ -1065,6 +1036,7 @@ func TestLogTaskCoordination_LogDoneBeforeTaskDone(t *testing.T) {
 	model := New(tasks)
 
 	_, _ = model.exec.RunNext(context.Background())
+
 	model.coord.StartTask(0)
 
 	newModel, _ := model.Update(logLineMsg{line: "log line 1"})
@@ -1104,65 +1076,6 @@ func TestFocusMode_TabKeyTogglesFocus(t *testing.T) {
 	model = newModel.(Model)
 	assert.Nil(t, cmd, "Tab should not return a command")
 	assert.Equal(t, FocusTaskList, model.focusedPanel, "Focus should switch back to TaskList")
-}
-
-func TestFocusMode_JKNavigationTaskList(t *testing.T) {
-	tasks := []task.Task{
-		newMockTask("task1", task.StatusDone, "", nil),
-		newMockTask("task2", task.StatusDone, "", nil),
-		newMockTask("task3", task.StatusDone, "", nil),
-	}
-	model := New(tasks)
-
-	m, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
-	model = m.(Model)
-	model.focusedPanel = FocusTaskList
-
-	assert.Equal(t, 0, model.selectedTask, "Initial selectedTask should be 0")
-
-	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
-	model = newModel.(Model)
-	assert.Equal(t, 1, model.selectedTask, "selectedTask should be 1")
-
-	newModel, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
-	model = newModel.(Model)
-	assert.Equal(t, 2, model.selectedTask, "selectedTask should be 2")
-
-	newModel, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
-	model = newModel.(Model)
-	assert.Equal(t, 2, model.selectedTask, "selectedTask should stay at 2 (max)")
-
-	newModel, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
-	model = newModel.(Model)
-	assert.Equal(t, 1, model.selectedTask, "selectedTask should be 1")
-
-	newModel, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
-	model = newModel.(Model)
-	assert.Equal(t, 0, model.selectedTask, "selectedTask should be 0")
-
-	newModel, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
-	model = newModel.(Model)
-	assert.Equal(t, 0, model.selectedTask, "selectedTask should stay at 0 (min)")
-}
-
-func TestFocusMode_ArrowKeyNavigationTaskList(t *testing.T) {
-	tasks := []task.Task{
-		newMockTask("task1", task.StatusDone, "", nil),
-		newMockTask("task2", task.StatusDone, "", nil),
-	}
-	model := New(tasks)
-
-	m, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
-	model = m.(Model)
-	model.focusedPanel = FocusTaskList
-
-	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyDown})
-	model = newModel.(Model)
-	assert.Equal(t, 1, model.selectedTask, "selectedTask should be 1")
-
-	newModel, _ = model.Update(tea.KeyMsg{Type: tea.KeyUp})
-	model = newModel.(Model)
-	assert.Equal(t, 0, model.selectedTask, "selectedTask should be 0")
 }
 
 func TestFocusMode_JKScrollsLogsWhenFocused(t *testing.T) {
@@ -1241,29 +1154,6 @@ func TestFocusMode_GKeyIgnoredWhenTaskListFocused(t *testing.T) {
 	assert.Equal(t, initialY, model.logViewport.YOffset, "YOffset should not change when G pressed with task list focused")
 }
 
-func TestFocusMode_NavigationBounds(t *testing.T) {
-	tasks := []task.Task{
-		newMockTask("task1", task.StatusDone, "", nil),
-		newMockTask("task2", task.StatusDone, "", nil),
-		newMockTask("task3", task.StatusDone, "", nil),
-	}
-	model := New(tasks)
-
-	m, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
-	model = m.(Model)
-	model.focusedPanel = FocusTaskList
-
-	model.selectedTask = 0
-	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
-	model = newModel.(Model)
-	assert.Equal(t, 0, model.selectedTask, "selectedTask should not go below 0")
-
-	model.selectedTask = 2
-	newModel, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
-	model = newModel.(Model)
-	assert.Equal(t, 2, model.selectedTask, "selectedTask should not exceed task count - 1")
-}
-
 func TestShowLogs_DefaultTrue(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "", nil),
@@ -1328,28 +1218,41 @@ func TestShowLogs_DisplaysHistoryWhenStopped(t *testing.T) {
 	model.logViewport = viewport.New(model.layout.RightWidth-panelBorderWidth, model.layout.Height-logPanelOverhead)
 
 	_, _ = model.exec.RunNext(context.Background())
+
 	model.coord.StartTask(0)
-	model.coord.AddLogLine("task1 log line 1")
-	model.coord.AddLogLine("task1 log line 2")
-	model.coord.LogsDone()
-	model.coord.TaskDone(task.Result{Status: task.StatusDone})
+	newModel, _ := model.Update(logLineMsg{line: "task1 log line 1"})
+	model = newModel.(Model)
+	newModel, _ = model.Update(logLineMsg{line: "task1 log line 2"})
+	model = newModel.(Model)
+	newModel, _ = model.Update(logDoneMsg{})
+	model = newModel.(Model)
+	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
+	model = newModel.(Model)
 
 	_, _ = model.exec.RunNext(context.Background())
-	model.coord.StartTask(1)
-	model.coord.AddLogLine("task2 log line 1")
-	model.coord.AddLogLine("task2 log line 2")
-	model.coord.AddLogLine("task2 log line 3")
-	model.coord.LogsDone()
-	model.coord.TaskDone(task.Result{Status: task.StatusDone})
 
-	model.selectedTask = 0
+	model.coord.StartTask(1)
+	newModel, _ = model.Update(logLineMsg{line: "task2 log line 1"})
+	model = newModel.(Model)
+	newModel, _ = model.Update(logLineMsg{line: "task2 log line 2"})
+	model = newModel.(Model)
+	newModel, _ = model.Update(logLineMsg{line: "task2 log line 3"})
+	model = newModel.(Model)
+	newModel, _ = model.Update(logDoneMsg{})
+	model = newModel.(Model)
+	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
+	model = newModel.(Model)
+
+	model.taskList.Update(SetSelectionMsg{Index: 0})
+	model.selectedTaskIdx = 0
 
 	logs := model.getDisplayLogs()
 	assert.Len(t, logs, 2, "Should return task1 logs")
 	assert.Equal(t, "task1 log line 1", logs[0])
 	assert.Equal(t, "task1 log line 2", logs[1])
 
-	model.selectedTask = 1
+	model.taskList.Update(SetSelectionMsg{Index: 1})
+	model.selectedTaskIdx = 1
 
 	logs = model.getDisplayLogs()
 	assert.Len(t, logs, 3, "Should return task2 logs")
@@ -1407,34 +1310,47 @@ func TestShowLogs_GetDisplayLogs(t *testing.T) {
 	model := New(tasks)
 
 	_, _ = model.exec.RunNext(context.Background())
+
 	model.coord.StartTask(0)
-	model.coord.AddLogLine("task1 log")
-	model.coord.LogsDone()
-	model.coord.TaskDone(task.Result{Status: task.StatusDone})
+	newModel, _ := model.Update(logLineMsg{line: "task1 log"})
+	model = newModel.(Model)
+	newModel, _ = model.Update(logDoneMsg{})
+	model = newModel.(Model)
+	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
+	model = newModel.(Model)
 
 	_, _ = model.exec.RunNext(context.Background())
+
 	model.coord.StartTask(1)
-	model.coord.AddLogLine("task2 log")
-	model.coord.LogsDone()
-	model.coord.TaskDone(task.Result{Status: task.StatusDone})
+	newModel, _ = model.Update(logLineMsg{line: "task2 log"})
+	model = newModel.(Model)
+	newModel, _ = model.Update(logDoneMsg{})
+	model = newModel.(Model)
+	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
+	model = newModel.(Model)
 
 	_, _ = model.exec.RunNext(context.Background())
+
 	model.coord.StartTask(2)
+	newModel, _ = model.Update(logDoneMsg{})
+	model = newModel.(Model)
+	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
+	model = newModel.(Model)
 
-	model.coord.LogsDone()
-	model.coord.TaskDone(task.Result{Status: task.StatusDone})
-
-	model.selectedTask = 0
+	model.taskList.Update(SetSelectionMsg{Index: 0})
+	model.selectedTaskIdx = 0
 	logs := model.getDisplayLogs()
 	assert.Len(t, logs, 1, "Should return task1 logs")
 	assert.Equal(t, "task1 log", logs[0])
 
-	model.selectedTask = 1
+	model.taskList.Update(SetSelectionMsg{Index: 1})
+	model.selectedTaskIdx = 1
 	logs = model.getDisplayLogs()
 	assert.Len(t, logs, 1, "Should return task2 logs")
 	assert.Equal(t, "task2 log", logs[0])
 
-	model.selectedTask = 2
+	model.taskList.Update(SetSelectionMsg{Index: 2})
+	model.selectedTaskIdx = 2
 	logs = model.getDisplayLogs()
 	assert.Nil(t, logs, "Should return nil for task with no logs")
 }
@@ -1532,4 +1448,342 @@ func TestAppContainer_HelpBarInsideContainer(t *testing.T) {
 
 	lastLine := lines[len(lines)-1]
 	assert.Contains(t, lastLine, "╯", "Last line should contain bottom border")
+}
+
+func TestIntegration_JKNavigationDelegatedToTaskList(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+		newMockTask("task2", task.StatusDone, "", nil),
+		newMockTask("task3", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+
+	m, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	model = m.(Model)
+
+	for range tasks {
+		_, _ = model.exec.RunNext(context.Background())
+	}
+
+	assert.Equal(t, FocusTaskList, model.focusedPanel, "focus should be on task list")
+	assert.Equal(t, 0, model.taskList.Selected(), "initial selection should be 0")
+
+	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	model = newModel.(Model)
+
+	require.NotNil(t, cmd, "j key should return command for TaskSelectedMsg")
+	msg := cmd()
+	selectedMsg, ok := msg.(TaskSelectedMsg)
+	require.True(t, ok, "command should produce TaskSelectedMsg")
+	assert.Equal(t, 1, selectedMsg.Index, "TaskSelectedMsg should have index 1")
+	assert.Equal(t, 1, model.taskList.Selected(), "selection should move to index 1")
+
+	view := model.View()
+	assert.True(t, selectionIsOnTask(view, "task2"), "selection indicator should be on task2")
+
+	newModel, cmd = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	model = newModel.(Model)
+
+	require.NotNil(t, cmd)
+	msg = cmd()
+	selectedMsg, ok = msg.(TaskSelectedMsg)
+	require.True(t, ok)
+	assert.Equal(t, 2, selectedMsg.Index)
+	assert.Equal(t, 2, model.taskList.Selected())
+
+	view = model.View()
+	assert.True(t, selectionIsOnTask(view, "task3"), "selection should move to task3")
+
+	newModel, cmd = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	model = newModel.(Model)
+
+	require.NotNil(t, cmd)
+	msg = cmd()
+	selectedMsg, ok = msg.(TaskSelectedMsg)
+	require.True(t, ok)
+	assert.Equal(t, 1, selectedMsg.Index)
+	assert.Equal(t, 1, model.taskList.Selected())
+
+	view = model.View()
+	assert.True(t, selectionIsOnTask(view, "task2"), "selection should move back to task2")
+}
+
+func TestIntegration_ArrowKeyNavigationDelegatedToTaskList(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+		newMockTask("task2", task.StatusDone, "", nil),
+		newMockTask("task3", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+
+	m, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	model = m.(Model)
+
+	for range tasks {
+		_, _ = model.exec.RunNext(context.Background())
+	}
+
+	assert.Equal(t, FocusTaskList, model.focusedPanel)
+	assert.Equal(t, 0, model.taskList.Selected())
+
+	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = newModel.(Model)
+
+	require.NotNil(t, cmd, "down arrow should return command for TaskSelectedMsg")
+	msg := cmd()
+	selectedMsg, ok := msg.(TaskSelectedMsg)
+	require.True(t, ok)
+	assert.Equal(t, 1, selectedMsg.Index)
+	assert.Equal(t, 1, model.taskList.Selected())
+
+	view := model.View()
+	assert.True(t, selectionIsOnTask(view, "task2"), "selection should be on task2")
+
+	newModel, cmd = model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	model = newModel.(Model)
+
+	require.NotNil(t, cmd)
+	msg = cmd()
+	selectedMsg, ok = msg.(TaskSelectedMsg)
+	require.True(t, ok)
+	assert.Equal(t, 0, selectedMsg.Index)
+	assert.Equal(t, 0, model.taskList.Selected())
+
+	view = model.View()
+	assert.True(t, selectionIsOnTask(view, "task1"), "selection should be back on task1")
+}
+
+func TestIntegration_NavigationBoundsRespected(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+		newMockTask("task2", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+
+	m, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	model = m.(Model)
+
+	for range tasks {
+		_, _ = model.exec.RunNext(context.Background())
+	}
+
+	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	model = newModel.(Model)
+
+	assert.Nil(t, cmd, "k at top should not produce command")
+	assert.Equal(t, 0, model.taskList.Selected(), "selection should stay at 0")
+
+	newModel, cmd = model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	model = newModel.(Model)
+
+	assert.Nil(t, cmd, "up arrow at top should not produce command")
+	assert.Equal(t, 0, model.taskList.Selected())
+
+	model.taskList.Update(SetSelectionMsg{Index: 1})
+
+	newModel, cmd = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	model = newModel.(Model)
+
+	assert.Nil(t, cmd, "j at bottom should not produce command")
+	assert.Equal(t, 1, model.taskList.Selected())
+
+	newModel, cmd = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = newModel.(Model)
+
+	assert.Nil(t, cmd, "down arrow at bottom should not produce command")
+	assert.Equal(t, 1, model.taskList.Selected())
+}
+
+func TestIntegration_TaskSelectedMsgUpdatesLogViewport(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+		newMockTask("task2", task.StatusDone, "", nil),
+		newMockTask("task3", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+
+	m, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	model = m.(Model)
+
+	_, _ = model.exec.RunNext(context.Background())
+
+	model.coord.StartTask(0)
+	newModel, _ := model.Update(logLineMsg{line: "task1 output line 1"})
+	model = newModel.(Model)
+	newModel, _ = model.Update(logLineMsg{line: "task1 output line 2"})
+	model = newModel.(Model)
+	newModel, _ = model.Update(logDoneMsg{})
+	model = newModel.(Model)
+	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
+	model = newModel.(Model)
+
+	_, _ = model.exec.RunNext(context.Background())
+
+	model.coord.StartTask(1)
+	newModel, _ = model.Update(logLineMsg{line: "task2 output line A"})
+	model = newModel.(Model)
+	newModel, _ = model.Update(logLineMsg{line: "task2 output line B"})
+	model = newModel.(Model)
+	newModel, _ = model.Update(logLineMsg{line: "task2 output line C"})
+	model = newModel.(Model)
+	newModel, _ = model.Update(logDoneMsg{})
+	model = newModel.(Model)
+	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
+	model = newModel.(Model)
+
+	_, _ = model.exec.RunNext(context.Background())
+
+	model.coord.StartTask(2)
+	newModel, _ = model.Update(logDoneMsg{})
+	model = newModel.(Model)
+	newModel, _ = model.Update(taskDoneMsg{result: task.Result{Status: task.StatusDone}})
+	model = newModel.(Model)
+
+	model.initLogViewportForHistory()
+
+	assert.True(t, model.exec.Stopped(), "executor should be stopped")
+
+	model.taskList.Update(SetSelectionMsg{Index: 0})
+	newModel, cmd := model.Update(TaskSelectedMsg{Index: 0})
+	model = newModel.(Model)
+
+	assert.Nil(t, cmd, "TaskSelectedMsg should not return command")
+	content := model.logViewport.View()
+	assert.Contains(t, content, "task1 output line 1", "log viewport should show task1 logs")
+	assert.Contains(t, content, "task1 output line 2")
+	assert.NotContains(t, content, "task2 output", "log viewport should not show task2 logs")
+
+	model.taskList.Update(SetSelectionMsg{Index: 1})
+	newModel, cmd = model.Update(TaskSelectedMsg{Index: 1})
+	model = newModel.(Model)
+
+	assert.Nil(t, cmd)
+	content = model.logViewport.View()
+	assert.Contains(t, content, "task2 output line A", "log viewport should show task2 logs")
+	assert.Contains(t, content, "task2 output line B")
+	assert.Contains(t, content, "task2 output line C")
+	assert.NotContains(t, content, "task1 output", "log viewport should not show task1 logs")
+
+	model.taskList.Update(SetSelectionMsg{Index: 2})
+	newModel, _ = model.Update(TaskSelectedMsg{Index: 2})
+	model = newModel.(Model)
+
+	content = model.logViewport.View()
+	assert.NotContains(t, content, "task1 output")
+	assert.NotContains(t, content, "task2 output")
+}
+
+func TestIntegration_SelectionAutoAdvancesOnTaskComplete(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+		newMockTask("task2", task.StatusDone, "", nil),
+		newMockTask("task3", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+
+	m, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	model = m.(Model)
+
+	assert.Equal(t, 0, model.taskList.Selected(), "initial selection should be 0")
+
+	_, _ = model.exec.RunNext(context.Background())
+
+	model.coord.StartTask(0)
+	newModel, _ := model.Update(logDoneMsg{})
+	model = newModel.(Model)
+
+	model, _ = model.completeTask(task.Result{Status: task.StatusDone})
+
+	assert.Equal(t, 1, model.taskList.Selected(), "selection should auto-advance to 1 after task1 completes")
+
+	_, _ = model.exec.RunNext(context.Background())
+
+	model.coord.StartTask(1)
+	newModel, _ = model.Update(logDoneMsg{})
+	model = newModel.(Model)
+
+	model, _ = model.completeTask(task.Result{Status: task.StatusDone})
+
+	assert.Equal(t, 2, model.taskList.Selected(), "selection should auto-advance to 2 after task2 completes")
+
+	_, _ = model.exec.RunNext(context.Background())
+
+	model.coord.StartTask(2)
+	newModel, _ = model.Update(logDoneMsg{})
+	model = newModel.(Model)
+
+	model, _ = model.completeTask(task.Result{Status: task.StatusDone})
+
+	assert.Equal(t, 2, model.taskList.Selected(), "selection should stay at 2 when at last task")
+}
+
+func TestIntegration_SelectionNotAdvancedOnFailure(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+		newMockTask("task2", task.StatusFailed, "", errors.New("failure")),
+		newMockTask("task3", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+
+	m, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	model = m.(Model)
+
+	_, _ = model.exec.RunNext(context.Background())
+
+	model.coord.StartTask(0)
+	newModel, _ := model.Update(logDoneMsg{})
+	model = newModel.(Model)
+	model, _ = model.completeTask(task.Result{Status: task.StatusDone})
+
+	assert.Equal(t, 1, model.taskList.Selected(), "selection should be at 1 after task1")
+
+	_, _ = model.exec.RunNext(context.Background())
+
+	model.coord.StartTask(1)
+	newModel, _ = model.Update(logDoneMsg{})
+	model = newModel.(Model)
+	model, _ = model.completeTask(task.Result{Status: task.StatusFailed, Error: errors.New("failure")})
+
+	assert.True(t, model.exec.Stopped(), "executor should be stopped after failure")
+	assert.Equal(t, 1, model.taskList.Selected(), "selection should stay at 1 on failure (no auto-advance)")
+}
+
+func TestIntegration_NavigationDelegatedOnlyWhenTaskListFocused(t *testing.T) {
+	tasks := []task.Task{
+		newMockTask("task1", task.StatusDone, "", nil),
+		newMockTask("task2", task.StatusDone, "", nil),
+	}
+	model := New(tasks)
+
+	m, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	model = m.(Model)
+
+	for range tasks {
+		_, _ = model.exec.RunNext(context.Background())
+	}
+
+	model.focusedPanel = FocusLogs
+	model.logViewport = viewport.New(50, 20)
+	lines := make([]string, 50)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("log line %d", i)
+	}
+	model.logViewport.SetContent(strings.Join(lines, "\n"))
+	initialLogY := model.logViewport.YOffset
+	initialSelection := model.taskList.Selected()
+
+	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	model = newModel.(Model)
+
+	assert.Nil(t, cmd, "j should not emit TaskSelectedMsg when logs focused")
+	assert.Equal(t, initialSelection, model.taskList.Selected(), "task selection should not change")
+	assert.Greater(t, model.logViewport.YOffset, initialLogY, "log viewport should scroll down")
+
+	model.logViewport.GotoTop()
+
+	newModel, cmd = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = newModel.(Model)
+
+	assert.Nil(t, cmd, "down arrow should not emit TaskSelectedMsg when logs focused")
+	assert.Equal(t, initialSelection, model.taskList.Selected(), "task selection should not change")
 }

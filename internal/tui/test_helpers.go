@@ -2,6 +2,7 @@ package tui
 
 import (
 	"booster/internal/task"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,8 +25,14 @@ func AssertTaskStatus(t *testing.T, view, taskName string, status task.Status) {
 		indicator := statusIndicators[status]
 		assert.Contains(t, view, indicator, "View should show %v indicator (%s) for task: %s", status, indicator, taskName)
 	case task.StatusPending:
-
-		assert.Contains(t, view, "  "+taskName, "Pending task should have indentation")
+		for line := range strings.SplitSeq(view, "\n") {
+			if strings.Contains(line, taskName) {
+				for status, indicator := range statusIndicators {
+					assert.NotContains(t, line, indicator, "Pending task %s should not have %v indicator", taskName, status)
+				}
+				return
+			}
+		}
 	}
 }
 
@@ -45,11 +52,6 @@ func AssertHasError(t *testing.T, view, errorText string) {
 func AssertShowsTitle(t *testing.T, view string) {
 	t.Helper()
 	assert.Contains(t, view, "BOOSTER", "View should contain title")
-}
-
-func AssertRunningEllipsis(t *testing.T, view, taskName string) {
-	t.Helper()
-	assert.Contains(t, view, taskName+"...", "Running task should show with ellipsis")
 }
 
 func AssertSkippedReason(t *testing.T, view, reason string) {

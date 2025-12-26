@@ -45,28 +45,32 @@ type Model struct {
 
 	layout Layout
 
+	taskList        *TaskListModel
+	selectedTaskIdx int
+
 	outputViewport viewport.Model
 	logViewport    viewport.Model
-	taskViewport   viewport.Model
 
 	logCh        <-chan string
 	logWriter    *logstream.ChannelWriter
-	selectedTask int
 	focusedPanel FocusPanel
-
-	spinner SpinnerModel
 
 	debugFile *os.File
 }
 
 func New(tasks []task.Task) Model {
+	exec := executor.New(tasks)
+	tl := NewTaskList(exec)
+	tl.SetCompactMode(true)
+	tl.SetSize(80, exec.Total())
+
 	m := Model{
-		exec:         executor.New(tasks),
-		coord:        coordinator.New(),
-		showLogs:     true,
-		selectedTask: 0,
-		focusedPanel: FocusTaskList,
-		spinner:      NewSpinner(),
+		exec:            exec,
+		coord:           coordinator.New(),
+		showLogs:        true,
+		focusedPanel:    FocusTaskList,
+		taskList:        tl,
+		selectedTaskIdx: 0,
 	}
 
 	if debugPath := os.Getenv("BOOSTER_DEBUG"); debugPath != "" {
@@ -134,7 +138,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case tea.MouseButtonWheelUp:
 				if clickX < m.layout.LeftWidth {
-					m.taskViewport.ScrollUp(3)
+					m.taskList.ScrollUp(3)
 				} else {
 					m.logViewport.ScrollUp(3)
 				}
@@ -142,7 +146,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case tea.MouseButtonWheelDown:
 				if clickX < m.layout.LeftWidth {
-					m.taskViewport.ScrollDown(3)
+					m.taskList.ScrollDown(3)
 				} else {
 					m.logViewport.ScrollDown(3)
 				}
@@ -170,32 +174,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case "j", "down":
 				if m.focusedPanel == FocusTaskList {
-					if m.selectedTask < m.exec.Total()-1 {
-						m.selectedTask++
-						m.ensureTaskVisible()
-					}
-
-					if m.exec.Stopped() {
-						m.updateLogViewportForSelectedTask()
-					}
-				} else {
-					m.logViewport.ScrollDown(1)
+					return m, m.taskList.Update(msg)
 				}
+				m.logViewport.ScrollDown(1)
 				return m, nil
 
 			case "k", "up":
 				if m.focusedPanel == FocusTaskList {
-					if m.selectedTask > 0 {
-						m.selectedTask--
-						m.ensureTaskVisible()
-					}
-
-					if m.exec.Stopped() {
-						m.updateLogViewportForSelectedTask()
-					}
-				} else {
-					m.logViewport.ScrollUp(1)
+					return m, m.taskList.Update(msg)
 				}
+				m.logViewport.ScrollUp(1)
 				return m, nil
 
 			case "G":
@@ -255,19 +243,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.logViewport.SetContent("")
 
 			taskViewportHeight := max(m.layout.Height-taskPanelOverhead, 3)
-			m.taskViewport = viewport.New(
-				m.layout.LeftWidth-taskPanelPadding,
-				taskViewportHeight,
-			)
+			m.taskList.SetSize(m.layout.LeftWidth-taskPanelPadding, taskViewportHeight)
 		}
 
 		return m, cmd
 
 	case spinnerTickMsg:
-		m.spinner = m.spinner.Update(msg)
+		_ = m.taskList.Update(msg)
 
 		if !m.exec.Stopped() {
-			return m, m.spinner.Tick()
+			return m, m.taskList.SpinnerTick()
 		}
 		return m, nil
 
@@ -299,6 +284,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case TaskSelectedMsg:
+		m.selectedTaskIdx = msg.Index
+		if m.exec.Stopped() {
+			m.updateLogViewportForTask(msg.Index)
+		}
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -312,21 +304,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.layout.IsTwoColumn() {
+			m.taskList.SetCompactMode(false)
 			m.logViewport.Width = m.layout.RightWidth - panelBorderWidth
 			m.logViewport.Height = m.layout.Height - logPanelOverhead
 
 			taskViewportHeight := max(m.layout.Height-taskPanelOverhead, 3)
-			m.taskViewport.Width = m.layout.LeftWidth - taskPanelPadding
-			m.taskViewport.Height = taskViewportHeight
+			m.taskList.SetSize(m.layout.LeftWidth-taskPanelPadding, taskViewportHeight)
+		} else {
+			m.taskList.SetCompactMode(true)
+			availableWidth := max(contentWidth, 40)
+			m.taskList.SetSize(availableWidth, m.exec.Total())
 		}
 		return m, nil
 	}
 
 	return m, nil
-}
-
-func (m Model) spinnerView() string {
-	return m.spinner.View()
 }
 
 func (m Model) contentDimensions() (width, height int) {
@@ -363,7 +355,6 @@ func (m Model) renderSingleColumn() string {
 	var s strings.Builder
 
 	tasks := m.exec.Tasks()
-	current := m.exec.Current()
 	stopped := m.exec.Stopped()
 	total := m.exec.Total()
 
@@ -385,47 +376,21 @@ func (m Model) renderSingleColumn() string {
 	s.WriteString(RenderProgress(completed, total, m.exec.ElapsedTime(), barWidth))
 	s.WriteString("\n\n")
 
+	s.WriteString(m.taskList.View())
+	s.WriteString("\n")
+
 	var failedTask *FailureInfo
-
-	availableWidth := max(
-
-		m.width-4, 40)
-
 	for i, t := range tasks {
-		var line string
 		r := m.exec.ResultAt(i)
-
-		if r.Status != task.StatusPending {
-			switch r.Status {
-			case task.StatusDone:
-				suffix := formatElapsedCompact(r.Duration)
-				taskLine := renderTaskWithLeader("✓ ", t.Name(), suffix, availableWidth)
-				line = doneStyle.Render(taskLine)
-			case task.StatusSkipped:
-				label := "exists"
-				if strings.HasPrefix(r.Message, "condition not met:") {
-					label = "skipped"
-				}
-				taskLine := renderTaskWithLeader("○ ", t.Name(), label, availableWidth)
-				line = skippedStyle.Render(taskLine)
-			case task.StatusFailed:
-
-				failedTask = &FailureInfo{
-					TaskName: t.Name(),
-					Error:    r.Error,
-					Output:   r.Output,
-					Duration: r.Duration,
-				}
-
-				line = failedStyle.Render("✗ " + t.Name())
+		if r.Status == task.StatusFailed {
+			failedTask = &FailureInfo{
+				TaskName: t.Name(),
+				Error:    r.Error,
+				Output:   r.Output,
+				Duration: r.Duration,
 			}
-		} else if i == current && !stopped {
-			line = runningStyle.Render("→ " + t.Name() + " " + m.spinnerView())
-		} else {
-			line = pendingStyle.Render("  " + t.Name())
+			break
 		}
-
-		s.WriteString(line + "\n")
 	}
 
 	currentLogs := m.coord.CurrentLogs()
@@ -548,8 +513,8 @@ func (m Model) renderTwoColumn(layout Layout) string {
 
 		var taskName string
 		if m.exec.Stopped() {
-			if m.selectedTask < len(m.exec.Tasks()) {
-				taskName = m.exec.Tasks()[m.selectedTask].Name()
+			if m.selectedTaskIdx < len(m.exec.Tasks()) {
+				taskName = m.exec.Tasks()[m.selectedTaskIdx].Name()
 			}
 		} else {
 			if m.exec.Current() < len(m.exec.Tasks()) {
@@ -623,9 +588,7 @@ func (m Model) renderTaskListContent(width int) string {
 	s.WriteString(RenderProgress(completed, total, m.exec.ElapsedTime(), barWidth))
 	s.WriteString("\n\n")
 
-	taskLines := m.renderTaskLines(width)
-	m.taskViewport.SetContent(taskLines)
-	s.WriteString(m.taskViewport.View())
+	s.WriteString(m.taskList.View())
 
 	return s.String()
 }
@@ -642,63 +605,6 @@ func renderTaskWithLeader(prefix, name, suffix string, totalWidth int) string {
 	return prefix + name + " " + leaders + " " + suffix
 }
 
-func (m Model) renderTaskLines(width int) string {
-	var s strings.Builder
-
-	tasks := m.exec.Tasks()
-	current := m.exec.Current()
-	stopped := m.exec.Stopped()
-
-	for i, t := range tasks {
-		var line string
-		r := m.exec.ResultAt(i)
-		isSelected := i == m.selectedTask
-
-		prefix := "○ "
-		if isSelected {
-			prefix = "▶ "
-		}
-
-		if r.Status != task.StatusPending {
-			switch r.Status {
-			case task.StatusDone:
-				suffix := formatElapsedCompact(r.Duration)
-				taskLine := renderTaskWithLeader(prefix+"✓ ", t.Name(), suffix, width)
-				line = doneStyle.Render(taskLine)
-			case task.StatusSkipped:
-				label := "exists"
-				if strings.HasPrefix(r.Message, "condition not met:") {
-					label = "skipped"
-				}
-				taskLine := renderTaskWithLeader(prefix+"○ ", t.Name(), label, width)
-				line = skippedStyle.Render(taskLine)
-			case task.StatusFailed:
-				line = failedStyle.Render(prefix + "✗ " + t.Name())
-			}
-		} else if i == current && !stopped {
-			line = runningStyle.Render(prefix + "→ " + t.Name() + " " + m.spinnerView())
-		} else {
-			line = pendingStyle.Render(prefix + "  " + t.Name())
-		}
-
-		if isSelected {
-			lineWidth := lipgloss.Width(line)
-			if lineWidth < width {
-				line += strings.Repeat(" ", width-lineWidth-4)
-			}
-			line = selectedRowStyle.Render(line)
-		}
-
-		s.WriteString(line)
-
-		if i < len(tasks)-1 {
-			s.WriteString("\n")
-		}
-	}
-
-	return s.String()
-}
-
 func (m Model) isTwoColumnRunning() bool {
 	return m.layout.IsTwoColumn() && !m.exec.Stopped()
 }
@@ -709,35 +615,18 @@ func (m Model) isTwoColumn() bool {
 
 func (m Model) getDisplayLogs() []string {
 	if m.exec.Stopped() {
-		return m.coord.LogsFor(m.selectedTask)
+		return m.coord.LogsFor(m.selectedTaskIdx)
 	}
 
 	return m.coord.CurrentLogs()
 }
 
-func (m *Model) updateLogViewportForSelectedTask() {
-	logs := m.getDisplayLogs()
+func (m *Model) updateLogViewportForTask(idx int) {
+	logs := m.coord.LogsFor(idx)
 	if len(logs) > 0 {
 		m.logViewport.SetContent(strings.Join(logs, "\n"))
 	} else {
 		m.logViewport.SetContent("")
-	}
-}
-
-func (m *Model) ensureTaskVisible() {
-	if m.taskViewport.Height == 0 {
-		return
-	}
-
-	visibleStart := m.taskViewport.YOffset
-	visibleEnd := visibleStart + m.taskViewport.Height
-
-	if m.selectedTask < visibleStart {
-		m.taskViewport.SetYOffset(m.selectedTask)
-	}
-
-	if m.selectedTask >= visibleEnd {
-		m.taskViewport.SetYOffset(m.selectedTask - m.taskViewport.Height + 1)
 	}
 }
 
@@ -752,13 +641,9 @@ func (m *Model) initLogViewportForHistory() {
 	)
 
 	taskViewportHeight := max(m.layout.Height-taskPanelOverhead, 3)
-	m.taskViewport = viewport.New(
-		m.layout.LeftWidth-taskPanelPadding,
-		taskViewportHeight,
-	)
+	m.taskList.SetSize(m.layout.LeftWidth-taskPanelPadding, taskViewportHeight)
 
-	m.updateLogViewportForSelectedTask()
-	m.ensureTaskVisible()
+	m.updateLogViewportForTask(m.selectedTaskIdx)
 }
 
 func (m Model) buildSummaryData() SummaryData {
@@ -800,7 +685,7 @@ func (m Model) startTask() (*logstream.ChannelWriter, <-chan string, tea.Cmd) {
 	cmd := tea.Batch(
 		runTask(m.exec, logWriter),
 		listenForLogs(logCh),
-		m.spinner.Tick(),
+		m.taskList.SpinnerTick(),
 	)
 
 	return logWriter, logCh, cmd
@@ -818,14 +703,15 @@ func (m Model) completeTask(result task.Result) (Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.selectedTask < m.exec.Total()-1 {
-		m.selectedTask++
-		m.ensureTaskVisible()
-	}
+	advanceCmd := m.taskList.Update(AdvanceSelectionMsg{})
+	m.selectedTaskIdx = m.taskList.Selected()
 
-	return m, func() tea.Msg {
-		return startTaskMsg{}
-	}
+	return m, tea.Batch(
+		advanceCmd,
+		func() tea.Msg {
+			return startTaskMsg{}
+		},
+	)
 }
 
 func runTask(exec *executor.Executor, logWriter *logstream.ChannelWriter) tea.Cmd {
@@ -894,7 +780,7 @@ func (m Model) renderEmptyLogContent() string {
 
 	var taskIdx int
 	if m.exec.Stopped() {
-		taskIdx = m.selectedTask
+		taskIdx = m.selectedTaskIdx
 	} else {
 		taskIdx = m.exec.Current()
 	}

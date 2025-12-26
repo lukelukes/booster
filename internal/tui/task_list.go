@@ -10,69 +10,104 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const (
+	SelectionIndicator   = "▶"
+	NoSelectionIndicator = "○"
+)
+
 type TaskListModel struct {
-	exec     *executor.Executor
-	viewport viewport.Model
-	spinner  SpinnerModel
-	selected int
-	width    int
-	height   int
+	exec        *executor.Executor
+	viewport    viewport.Model
+	spinner     SpinnerModel
+	selected    int
+	width       int
+	height      int
+	compactMode bool
 }
 
-func NewTaskList(exec *executor.Executor) TaskListModel {
-	return TaskListModel{
+func NewTaskList(exec *executor.Executor) *TaskListModel {
+	return &TaskListModel{
 		exec:     exec,
 		spinner:  NewSpinner(),
 		selected: 0,
 	}
 }
 
-func (t TaskListModel) Update(msg tea.Msg) (TaskListModel, tea.Cmd) {
+type TaskSelectedMsg struct {
+	Index int
+}
+
+type SetSelectionMsg struct {
+	Index int
+}
+
+type AdvanceSelectionMsg struct{}
+
+func (t *TaskListModel) Update(msg tea.Msg) tea.Cmd {
 	t.spinner = t.spinner.Update(msg)
 
-	needsRefresh := false
-
 	switch msg := msg.(type) {
-	case spinnerTickMsg:
-		needsRefresh = !t.exec.Stopped()
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "j", "down":
 			if t.selected < t.exec.Total()-1 {
 				t.selected++
 				t.ensureVisible()
-				needsRefresh = true
+				t.refreshContent()
+				return t.emitSelected()
 			}
 		case "k", "up":
 			if t.selected > 0 {
 				t.selected--
 				t.ensureVisible()
-				needsRefresh = true
+				t.refreshContent()
+				return t.emitSelected()
 			}
+		}
+	case SetSelectionMsg:
+		if msg.Index >= 0 && msg.Index < t.exec.Total() {
+			t.selected = msg.Index
+			t.ensureVisible()
+			t.refreshContent()
+			return t.emitSelected()
+		}
+	case AdvanceSelectionMsg:
+		if t.selected < t.exec.Total()-1 {
+			t.selected++
+			t.ensureVisible()
+			t.refreshContent()
+			return t.emitSelected()
+		}
+	case spinnerTickMsg:
+		if !t.exec.Stopped() {
+			t.refreshContent()
 		}
 	}
 
-	if needsRefresh {
-		t.RefreshContent()
+	return nil
+}
+
+func (t *TaskListModel) emitSelected() tea.Cmd {
+	idx := t.selected
+	return func() tea.Msg {
+		return TaskSelectedMsg{Index: idx}
 	}
-	return t, nil
 }
 
 func (t *TaskListModel) SetSize(width, height int) {
 	t.width = width
 	t.height = height
 	t.viewport = viewport.New(width, height)
+	t.refreshContent()
 }
 
-func (t TaskListModel) Selected() int {
+func (t *TaskListModel) Selected() int {
 	return t.selected
 }
 
-func (t *TaskListModel) SetSelected(idx int) {
-	if idx >= 0 && idx < t.exec.Total() {
-		t.selected = idx
-		t.ensureVisible()
-	}
+func (t *TaskListModel) SetCompactMode(compact bool) {
+	t.compactMode = compact
+	t.refreshContent()
 }
 
 func (t *TaskListModel) ensureVisible() {
@@ -91,16 +126,16 @@ func (t *TaskListModel) ensureVisible() {
 	}
 }
 
-func (t TaskListModel) View() string {
+func (t *TaskListModel) refreshContent() {
+	t.viewport.SetContent(t.renderTaskLines())
+}
+
+func (t *TaskListModel) View() string {
+	t.refreshContent()
 	return t.viewport.View()
 }
 
-func (t *TaskListModel) RefreshContent() {
-	content := t.renderTaskLines()
-	t.viewport.SetContent(content)
-}
-
-func (t TaskListModel) renderTaskLines() string {
+func (t *TaskListModel) renderTaskLines() string {
 	var s strings.Builder
 
 	tasks := t.exec.Tasks()
@@ -112,9 +147,9 @@ func (t TaskListModel) renderTaskLines() string {
 		result := t.exec.ResultAt(i)
 		isSelected := i == t.selected
 
-		prefix := "○ "
-		if isSelected {
-			prefix = "▶ "
+		prefix := NoSelectionIndicator + " "
+		if isSelected && !t.compactMode {
+			prefix = SelectionIndicator + " "
 		}
 
 		if result.Status != task.StatusPending {
@@ -139,7 +174,7 @@ func (t TaskListModel) renderTaskLines() string {
 			line = pendingStyle.Render(prefix + "  " + tsk.Name())
 		}
 
-		if isSelected {
+		if isSelected && !t.compactMode {
 			lineWidth := lipgloss.Width(line)
 			if lineWidth < t.width {
 				line += strings.Repeat(" ", t.width-lineWidth-4)
@@ -156,6 +191,14 @@ func (t TaskListModel) renderTaskLines() string {
 	return s.String()
 }
 
-func (t TaskListModel) SpinnerTick() tea.Cmd {
+func (t *TaskListModel) SpinnerTick() tea.Cmd {
 	return t.spinner.Tick()
+}
+
+func (t *TaskListModel) ScrollUp(n int) {
+	t.viewport.ScrollUp(n)
+}
+
+func (t *TaskListModel) ScrollDown(n int) {
+	t.viewport.ScrollDown(n)
 }

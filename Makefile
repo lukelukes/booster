@@ -109,4 +109,15 @@ help: ## Show this help (auto-generated)
 		/^[a-zA-Z0-9_.-]+:.*##/ { printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2 } \
 		END { if (NR==0) print "No help available.\n" }' $(MAKEFILE_LIST)
 
+##@ Aliases
+b: build    ## build
+t: test     ## test
+ta: test-all ## test-all
+l: lint     ## lint
+f: fmt      ## fmt
+v: verify-dev ## verify-dev
+c: clean    ## clean
+i: install  ## install
+cov: coverage ## coverage
+
 .DEFAULT_GOAL := help

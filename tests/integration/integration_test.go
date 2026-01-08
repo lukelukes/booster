@@ -20,7 +20,7 @@ import (
 
 func TestDirCreate_ExecutesForReal(t *testing.T) {
 	dir := t.TempDir()
-	targetDir := filepath.Join(dir, "created-by-booster", "nested", "path")
+	targetDir := filepath.Join(dir, "created-by-cli", "nested", "path")
 	configPath := filepath.Join(dir, "bootstrap.yaml")
 
 	content := fmt.Sprintf(`version: "1"

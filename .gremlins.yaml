@@ -2,6 +2,7 @@
 # https://gremlins.dev/latest/usage/configuration/
 
 unleash:
+  coverpkg: "./..."
   timeout-coefficient: 15
   threshold:
     efficacy: 80

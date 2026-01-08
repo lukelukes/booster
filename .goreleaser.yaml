@@ -2,7 +2,7 @@
 
 version: 2
 
-project_name: booster
+project_name: cli
 
 before:
   hooks:
@@ -10,9 +10,9 @@ before:
     - go generate ./...
 
 builds:
-  - id: booster
-    main: ./cmd/booster
-    binary: booster
+  - id: cli
+    main: ./cmd/cli
+    binary: cli
     env:
       - CGO_ENABLED=0
     goos:

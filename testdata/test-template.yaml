@@ -11,9 +11,9 @@ variables:
 tasks:
   - action: "dir.create"
     args:
-      - "/tmp/booster-test"
+      - "/tmp/cli-test"
 
   - action: "template.render"
     args:
       - source: "testdata/templates/gitconfig.tmpl"
-        target: "/tmp/booster-test/gitconfig"
+        target: "/tmp/cli-test/gitconfig"

@@ -82,7 +82,7 @@ func (t *PkgManagerInstall) installYay(ctx context.Context, runner cmdexec.Runne
 }
 
 func (t *PkgManagerInstall) installFromAUR(ctx context.Context, runner cmdexec.Runner, name, url string) Result {
-	tmpDir, err := os.MkdirTemp("", "booster-aur-")
+	tmpDir, err := os.MkdirTemp("", "cli-aur-")
 	if err != nil {
 		return Result{Status: StatusFailed, Error: fmt.Errorf("create temp dir: %w", err)}
 	}

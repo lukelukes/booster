@@ -143,13 +143,13 @@ func defaultValuesPath() string {
 		}
 		dataHome = filepath.Join(home, ".local", "share")
 	}
-	return filepath.Join(dataHome, "booster", "values.yaml")
+	return filepath.Join(dataHome, "cli", "values.yaml")
 }
 
 type VersionCmd struct{}
 
 func (c *VersionCmd) Run(cli *CLI) error {
-	fmt.Printf("booster %s (commit: %s, built: %s)\n", Version, Commit, Date)
+	fmt.Printf("cli %s (commit: %s, built: %s)\n", Version, Commit, Date)
 	return nil
 }
 
@@ -202,7 +202,7 @@ func ensureSudo() error {
 func main() {
 	cli := CLI{}
 	ctx := kong.Parse(&cli,
-		kong.Name("booster"),
+		kong.Name("cli"),
 		kong.Description("Bootstrap your machine from YAML config"),
 		kong.UsageOnError(),
 	)

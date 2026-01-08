@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/evilmartians/lefthook/refs/heads/master/schema.json
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: build
+      glob: "*.go"
+      run: make build
+      tags: [build]
+
+    - name: fmt-check
+      glob: "*.go"
+      run: make fmt-check
+      tags: [lint]
+
+    - name: lint
+      glob: "*.go"
+      run: make lint
+      tags: [lint]
+
+pre-push:
+  jobs:
+    - name: test
+      glob: "*.go"
+      run: make test-all
+      tags: [test]

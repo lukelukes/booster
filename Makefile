@@ -106,6 +106,7 @@ release: ## Create a release (requires GITHUB_TOKEN)
 ##@ Utility
 init-toolchain: ## Installs all mise managed tools
 	mise install
+	lefthook install
 
 upgrade-deps: ## Upgrades to the latest dependencies
 	go get -u ./...

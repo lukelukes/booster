@@ -1,5 +1,11 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/evilmartians/lefthook/refs/heads/master/schema.json
 
+commit-msg:
+  jobs:
+    - name: conventional-commits
+      run: ./scripts/check-commit-msg.sh {1}
+      tags: [lint]
+
 pre-commit:
   parallel: true
   jobs:

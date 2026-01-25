@@ -107,6 +107,10 @@ release: ## Create a release (requires GITHUB_TOKEN)
 init-toolchain: ## Installs all mise managed tools
 	mise install
 
+upgrade-deps: ## Upgrades to the latest dependencies
+	go get -u ./...
+	make tidy
+
 help: ## Show this help (auto-generated)
 	@awk 'BEGIN {FS = ":.*##"; ORS="";} \
 		/^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0,5); next } \

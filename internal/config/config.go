@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -28,8 +29,30 @@ type Task struct {
 }
 
 type When struct {
-	OS      StringOrSlice `yaml:"os,omitempty"`
-	Profile StringOrSlice `yaml:"profile,omitempty"`
+	Expr string
+}
+
+func (w *When) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == 0 {
+		return nil
+	}
+
+	switch node.Kind {
+	case yaml.ScalarNode:
+		expr := strings.TrimSpace(node.Value)
+		if expr == "" {
+			return errors.New("when cannot be empty; use an expression like `${ os == \"darwin\" }`")
+		}
+		if !strings.HasPrefix(expr, "${") || !strings.HasSuffix(expr, "}") {
+			return fmt.Errorf("when must be an expression string in `${ ... }` form, got %q", expr)
+		}
+		w.Expr = expr
+		return nil
+	case yaml.MappingNode:
+		return errors.New("legacy `when` map syntax is no longer supported; migrate `when: { os: darwin }` to `when: ${ os == \"darwin\" }` and `when: { profile: work }` to `when: ${ profile == \"work\" }`")
+	default:
+		return fmt.Errorf("when must be a string expression, got YAML kind %d", node.Kind)
+	}
 }
 
 type StringOrSlice []string

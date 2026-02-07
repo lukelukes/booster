@@ -1,25 +1,32 @@
 package task
 
 import (
-	"booster/internal/condition"
+	"booster/internal/expr"
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 )
 
 type ConditionalTask struct {
-	wrapped   Task
-	condition *condition.Condition
-	evaluator *condition.Evaluator
+	wrapped Task
+	when    *expr.Value
+	ctx     *expr.Context
+	rawWhen string
 }
 
-func NewConditionalTask(t Task, cond *condition.Condition, eval *condition.Evaluator) (*ConditionalTask, error) {
-	if eval == nil {
-		return nil, errors.New("evaluator cannot be nil")
+func NewConditionalTask(t Task, when *expr.Value, ctx *expr.Context, rawWhen string) (*ConditionalTask, error) {
+	if when == nil {
+		return nil, errors.New("when expression cannot be nil")
+	}
+	if ctx == nil {
+		return nil, errors.New("expression context cannot be nil")
 	}
 	return &ConditionalTask{
-		wrapped:   t,
-		condition: cond,
-		evaluator: eval,
+		wrapped: t,
+		when:    when,
+		ctx:     ctx,
+		rawWhen: rawWhen,
 	}, nil
 }
 
@@ -32,12 +39,44 @@ func (t *ConditionalTask) NeedsSudo() bool {
 }
 
 func (t *ConditionalTask) Run(ctx context.Context) Result {
-	if !t.evaluator.Matches(t.condition) {
-		reason := t.evaluator.FailureReason(t.condition)
+	shouldRun, err := expr.ResolveCondition(t.when, t.ctx)
+	if err != nil {
+		return Result{
+			Status: StatusFailed,
+			Error:  err,
+			Message: fmt.Sprintf(
+				"condition evaluation failed for when %q: %v",
+				formatWhenForMessage(t.rawWhen),
+				err,
+			),
+		}
+	}
+	if !shouldRun {
 		return Result{
 			Status:  StatusSkipped,
-			Message: "condition not met: " + reason,
+			Message: fmt.Sprintf("condition not met: when %q evaluated to false", formatWhenForMessage(t.rawWhen)),
 		}
 	}
 	return t.wrapped.Run(ctx)
+}
+
+const maxWhenMessageLen = 120
+
+func formatWhenForMessage(raw string) string {
+	sanitized := strings.Map(func(r rune) rune {
+		switch r {
+		case '\n', '\r', '\t':
+			return ' '
+		default:
+			if r < 32 {
+				return -1
+			}
+			return r
+		}
+	}, strings.TrimSpace(raw))
+
+	if len(sanitized) <= maxWhenMessageLen {
+		return sanitized
+	}
+	return strings.TrimSpace(sanitized[:maxWhenMessageLen-3]) + "..."
 }

@@ -1,8 +1,8 @@
 package task
 
 import (
-	"booster/internal/condition"
 	"booster/internal/config"
+	"booster/internal/expr"
 	"context"
 	"errors"
 	"testing"
@@ -146,7 +146,8 @@ func TestBuilder_Build_ErrorIndex_ThirdTask(t *testing.T) {
 }
 
 func TestDefaultBuilder_RegistersAllTasks(t *testing.T) {
-	ctx := condition.Context{OS: "arch", Profile: "personal"}
+	ctx := expr.NewContext().WithProfile("personal")
+	ctx.OS = "arch"
 	builder := DefaultBuilder(ctx)
 
 	tasks, err := builder.Build([]config.Task{
@@ -158,28 +159,66 @@ func TestDefaultBuilder_RegistersAllTasks(t *testing.T) {
 }
 
 func TestBuilder_Build_WithCondition(t *testing.T) {
-	eval := condition.NewEvaluator(condition.Context{OS: "nonexistent_os"})
-	builder := NewBuilder().Register("dir.create", NewDirCreate).WithEvaluator(eval)
-
-	tasks, err := builder.Build([]config.Task{
+	tests := []struct {
+		name     string
+		profile  string
+		os       string
+		whenExpr string
+		wantSkip bool
+	}{
 		{
-			Action: "dir.create",
-			When:   &config.When{OS: config.StringOrSlice{"arch", "darwin"}},
-			Args:   []any{"~/test"},
+			name:     "skip when os does not match",
+			profile:  "work",
+			os:       "nonexistent_os",
+			whenExpr: `${ os in ["arch", "darwin"] }`,
+			wantSkip: true,
 		},
-	})
+		{
+			name:     "skip when profile does not match",
+			profile:  "work",
+			os:       "arch",
+			whenExpr: `${ profile == "personal" }`,
+			wantSkip: true,
+		},
+		{
+			name:     "skip when combined condition does not match",
+			profile:  "work",
+			os:       "arch",
+			whenExpr: `${ os == "arch" and profile == "personal" }`,
+			wantSkip: true,
+		},
+	}
 
-	require.NoError(t, err)
-	require.Len(t, tasks, 1)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			exprCtx := expr.NewContext().WithProfile(tt.profile)
+			exprCtx.OS = tt.os
+			builder := NewBuilder().Register("dir.create", NewDirCreate).WithExprContext(exprCtx)
 
-	result := tasks[0].Run(context.Background())
-	assert.Equal(t, StatusSkipped, result.Status, "task should be skipped when condition doesn't match")
-	assert.Contains(t, result.Message, "condition not met", "skip message should indicate condition not met")
+			tasks, err := builder.Build([]config.Task{{
+				Action: "dir.create",
+				When:   &config.When{Expr: tt.whenExpr},
+				Args:   []any{"~/test"},
+			}})
+
+			require.NoError(t, err)
+			require.Len(t, tasks, 1)
+
+			result := tasks[0].Run(context.Background())
+			if tt.wantSkip {
+				assert.Equal(t, StatusSkipped, result.Status)
+				assert.Contains(t, result.Message, "condition not met")
+			} else {
+				assert.NotEqual(t, StatusSkipped, result.Status)
+			}
+		})
+	}
 }
 
 func TestBuilder_Build_WithoutCondition_NotWrapped(t *testing.T) {
-	eval := condition.NewEvaluator(condition.Context{OS: "nonexistent_os"})
-	builder := NewBuilder().Register("dir.create", NewDirCreate).WithEvaluator(eval)
+	exprCtx := expr.NewContext().WithProfile("work")
+	exprCtx.OS = "nonexistent_os"
+	builder := NewBuilder().Register("dir.create", NewDirCreate).WithExprContext(exprCtx)
 
 	tasks, err := builder.Build([]config.Task{
 		{
@@ -199,68 +238,17 @@ func TestBuilder_Build_WithoutCondition_NotWrapped(t *testing.T) {
 	}
 }
 
-func TestBuilder_Build_WithProfileCondition(t *testing.T) {
-	eval := condition.NewEvaluator(condition.Context{OS: "arch", Profile: "work"})
-	builder := NewBuilder().Register("dir.create", NewDirCreate).WithEvaluator(eval)
+func TestBuilder_Build_InvalidConditionExpression(t *testing.T) {
+	builder := NewBuilder().Register("dir.create", NewDirCreate).WithExprContext(expr.NewContext())
 
-	tasks, err := builder.Build([]config.Task{
+	_, err := builder.Build([]config.Task{
 		{
 			Action: "dir.create",
-			When:   &config.When{Profile: config.StringOrSlice{"personal"}},
+			When:   &config.When{Expr: `${ 1 + }`},
 			Args:   []any{"~/test"},
 		},
 	})
 
-	require.NoError(t, err)
-	require.Len(t, tasks, 1)
-
-	result := tasks[0].Run(context.Background())
-	assert.Equal(t, StatusSkipped, result.Status, "task should be skipped when profile doesn't match")
-	assert.Contains(t, result.Message, "condition not met")
-	assert.Contains(t, result.Message, "profile=work")
-}
-
-func TestBuilder_Build_WithBothOSAndProfileCondition(t *testing.T) {
-	eval := condition.NewEvaluator(condition.Context{OS: "arch", Profile: "work"})
-	builder := NewBuilder().Register("dir.create", NewDirCreate).WithEvaluator(eval)
-
-	tasks, err := builder.Build([]config.Task{
-		{
-			Action: "dir.create",
-			When: &config.When{
-				OS:      config.StringOrSlice{"arch"},
-				Profile: config.StringOrSlice{"personal"},
-			},
-			Args: []any{"~/test"},
-		},
-	})
-
-	require.NoError(t, err)
-	require.Len(t, tasks, 1)
-
-	result := tasks[0].Run(context.Background())
-	assert.Equal(t, StatusSkipped, result.Status, "task should be skipped when profile doesn't match")
-	assert.Contains(t, result.Message, "profile=work")
-}
-
-func TestBuilder_Build_NoEvaluator_NoWrapping(t *testing.T) {
-	builder := NewBuilder().Register("dir.create", NewDirCreate)
-
-	tasks, err := builder.Build([]config.Task{
-		{
-			Action: "dir.create",
-			When:   &config.When{OS: config.StringOrSlice{"arch"}},
-			Args:   []any{"~/test-no-eval"},
-		},
-	})
-
-	require.NoError(t, err)
-	require.Len(t, tasks, 1)
-
-	result := tasks[0].Run(context.Background())
-
-	if result.Status == StatusSkipped {
-		assert.NotContains(t, result.Message, "condition not met",
-			"task should not skip due to unmet condition when no evaluator present")
-	}
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid when")
 }

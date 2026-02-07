@@ -4,6 +4,7 @@ import (
 	"booster/internal/cmdexec"
 	"booster/internal/condition"
 	"booster/internal/config"
+	"booster/internal/expr"
 	"booster/internal/task"
 	"booster/internal/tui"
 	"booster/internal/variable"
@@ -54,10 +55,17 @@ func (c *RunCmd) Run(cli *CLI) error {
 	detector := &condition.SystemDetector{}
 	sysCtx := detector.Detect()
 	sysCtx.Profile = profile
+	exprCtx := expr.NewContext().WithProfile(profile)
+	exprCtx.OS = sysCtx.OS
+	varsAny := make(map[string]any, len(vars))
+	for k, v := range vars {
+		varsAny[k] = v
+	}
+	exprCtx = exprCtx.WithVars(varsAny)
 
 	configDir := filepath.Dir(cli.Config)
 
-	builder := task.DefaultBuilder(sysCtx)
+	builder := task.DefaultBuilder(exprCtx)
 	builder.Register("template.render", task.NewTemplateRenderFactory(task.TemplateRenderConfig{
 		Vars:    vars,
 		OS:      sysCtx.OS,

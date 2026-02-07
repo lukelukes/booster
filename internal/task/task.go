@@ -1,8 +1,8 @@
 package task
 
 import (
-	"booster/internal/condition"
 	"booster/internal/config"
+	"booster/internal/expr"
 	"context"
 	"fmt"
 	"time"
@@ -47,7 +47,7 @@ func AnyNeedsSudo(tasks []Task) bool {
 
 type Builder struct {
 	factories map[string]Factory
-	evaluator *condition.Evaluator
+	exprCtx   *expr.Context
 }
 
 func NewBuilder() *Builder {
@@ -61,8 +61,8 @@ func (b *Builder) Register(action string, factory Factory) *Builder {
 	return b
 }
 
-func (b *Builder) WithEvaluator(eval *condition.Evaluator) *Builder {
-	b.evaluator = eval
+func (b *Builder) WithExprContext(ctx *expr.Context) *Builder {
+	b.exprCtx = ctx
 	return b
 }
 
@@ -81,14 +81,14 @@ func (b *Builder) Build(tasks []config.Task) ([]Task, error) {
 		}
 
 		for _, t := range created {
-			if b.evaluator != nil && ct.When != nil {
-				cond := &condition.Condition{
-					OS:      ct.When.OS,
-					Profile: ct.When.Profile,
-				}
-				wrapped, err := NewConditionalTask(t, cond, b.evaluator)
+			if ct.When != nil {
+				whenValue, err := expr.NewValue(ct.When.Expr)
 				if err != nil {
-					return nil, fmt.Errorf("task %d (%s): %w", i+1, ct.Action, err)
+					return nil, fmt.Errorf("task %d (%s): invalid when %q: %w", i+1, ct.Action, formatWhenForMessage(ct.When.Expr), err)
+				}
+				wrapped, err := NewConditionalTask(t, whenValue, b.exprCtx, ct.When.Expr)
+				if err != nil {
+					return nil, fmt.Errorf("task %d (%s): invalid when %q: %w", i+1, ct.Action, formatWhenForMessage(ct.When.Expr), err)
 				}
 				t = wrapped
 			}
@@ -99,11 +99,9 @@ func (b *Builder) Build(tasks []config.Task) ([]Task, error) {
 	return result, nil
 }
 
-func DefaultBuilder(ctx condition.Context) *Builder {
-	eval := condition.NewEvaluator(ctx)
-
+func DefaultBuilder(ctx *expr.Context) *Builder {
 	return NewBuilder().
-		WithEvaluator(eval).
+		WithExprContext(ctx).
 		Register("dir.create", NewDirCreate).
 		Register("symlink.create", NewSymlinkCreate)
 }

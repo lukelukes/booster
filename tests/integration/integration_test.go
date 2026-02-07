@@ -1,9 +1,9 @@
 package integration
 
 import (
-	"booster/internal/condition"
 	"booster/internal/config"
 	"booster/internal/executor"
+	"booster/internal/expr"
 	"booster/internal/task"
 	"booster/internal/tui"
 	"booster/internal/variable"
@@ -34,8 +34,9 @@ tasks:
 	cfg, err := config.Load(configPath)
 	require.NoError(t, err)
 
-	condCtx := condition.Context{OS: "linux"}
-	builder := task.DefaultBuilder(condCtx)
+	exprCtx := expr.NewContext()
+	exprCtx.OS = "linux"
+	builder := task.DefaultBuilder(exprCtx)
 	tasks, err := builder.Build(cfg.Tasks)
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
@@ -68,8 +69,9 @@ tasks:
 	cfg, err := config.Load(configPath)
 	require.NoError(t, err)
 
-	condCtx := condition.Context{OS: "linux"}
-	builder1 := task.DefaultBuilder(condCtx)
+	exprCtx := expr.NewContext()
+	exprCtx.OS = "linux"
+	builder1 := task.DefaultBuilder(exprCtx)
 	tasks1, err := builder1.Build(cfg.Tasks)
 	require.NoError(t, err)
 
@@ -78,7 +80,7 @@ tasks:
 	require.True(t, ok1)
 	assert.Equal(t, task.StatusDone, result1.Status)
 
-	builder2 := task.DefaultBuilder(condCtx)
+	builder2 := task.DefaultBuilder(exprCtx)
 	tasks2, err := builder2.Build(cfg.Tasks)
 	require.NoError(t, err)
 
@@ -109,8 +111,9 @@ tasks:
 	cfg, err := config.Load(configPath)
 	require.NoError(t, err)
 
-	condCtx := condition.Context{OS: "linux"}
-	builder := task.DefaultBuilder(condCtx)
+	exprCtx := expr.NewContext()
+	exprCtx.OS = "linux"
+	builder := task.DefaultBuilder(exprCtx)
 	tasks, err := builder.Build(cfg.Tasks)
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
@@ -152,8 +155,9 @@ tasks:
 	cfg, err := config.Load(configPath)
 	require.NoError(t, err)
 
-	condCtx := condition.Context{OS: "linux"}
-	builder := task.DefaultBuilder(condCtx)
+	exprCtx := expr.NewContext()
+	exprCtx.OS = "linux"
+	builder := task.DefaultBuilder(exprCtx)
 	tasks, err := builder.Build(cfg.Tasks)
 	require.NoError(t, err)
 	require.Len(t, tasks, 3, "should create 3 tasks for 3 directories")
@@ -183,13 +187,11 @@ func TestConditionalTaskExecution(t *testing.T) {
 	content := fmt.Sprintf(`version: "1"
 tasks:
   - action: dir.create
-    when:
-      os: "arch"
+    when: ${ os == "arch" }
     args:
       - %s
   - action: dir.create
-    when:
-      os: "darwin"
+    when: ${ os == "darwin" }
     args:
       - %s
 `, archDir, darwinDir)
@@ -198,8 +200,9 @@ tasks:
 	cfg, err := config.Load(configPath)
 	require.NoError(t, err)
 
-	condCtx := condition.Context{OS: "arch"}
-	builder := task.DefaultBuilder(condCtx)
+	exprCtx := expr.NewContext()
+	exprCtx.OS = "arch"
+	builder := task.DefaultBuilder(exprCtx)
 
 	tasks, err := builder.Build(cfg.Tasks)
 	require.NoError(t, err)

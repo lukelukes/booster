@@ -15,6 +15,33 @@ type ConditionalTask struct {
 	rawWhen string
 }
 
+type SkippedConditionalTask struct {
+	action  string
+	rawWhen string
+}
+
+func NewSkippedConditionalTask(action, rawWhen string) *SkippedConditionalTask {
+	return &SkippedConditionalTask{action: action, rawWhen: rawWhen}
+}
+
+func (t *SkippedConditionalTask) Name() string {
+	if t.action == "" {
+		return "skipped task"
+	}
+	return t.action + " (skipped)"
+}
+
+func (t *SkippedConditionalTask) NeedsSudo() bool {
+	return false
+}
+
+func (t *SkippedConditionalTask) Run(context.Context) Result {
+	return Result{
+		Status:  StatusSkipped,
+		Message: fmt.Sprintf("condition not met: when %q evaluated to false", formatWhenForMessage(t.rawWhen)),
+	}
+}
+
 func NewConditionalTask(t Task, when *expr.Value, ctx *expr.Context, rawWhen string) (*ConditionalTask, error) {
 	if when == nil {
 		return nil, errors.New("when expression cannot be nil")
@@ -35,6 +62,13 @@ func (t *ConditionalTask) Name() string {
 }
 
 func (t *ConditionalTask) NeedsSudo() bool {
+	shouldRun, err := expr.ResolveCondition(t.when, t.ctx)
+	if err != nil {
+		return true
+	}
+	if !shouldRun {
+		return false
+	}
 	return t.wrapped.NeedsSudo()
 }
 

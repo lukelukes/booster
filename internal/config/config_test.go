@@ -165,7 +165,7 @@ tasks:
 			},
 		},
 		{
-			name: "mapping when is rejected",
+			name: "legacy mapping when with os string is migrated",
 			content: `version: "1"
 tasks:
   - action: dir.create
@@ -174,7 +174,26 @@ tasks:
     args:
       - ~/test
 `,
-			wantErr: "when must be an expression string in `${ ... }` form",
+			check: func(t *testing.T, cfg *Config) {
+				require.Len(t, cfg.Tasks, 1)
+				require.NotNil(t, cfg.Tasks[0].When)
+				assert.Equal(t, `${ os == "arch" }`, string(*cfg.Tasks[0].When))
+			},
+		},
+		{
+			name: "legacy empty mapping when is accepted as always run",
+			content: `version: "1"
+tasks:
+  - action: dir.create
+    when: {}
+    args:
+      - ~/test
+`,
+			check: func(t *testing.T, cfg *Config) {
+				require.Len(t, cfg.Tasks, 1)
+				require.NotNil(t, cfg.Tasks[0].When)
+				assert.Equal(t, `${ true }`, string(*cfg.Tasks[0].When))
+			},
 		},
 		{
 			name: "no when",
@@ -199,6 +218,17 @@ tasks:
       - ~/test
 `,
 			wantErr: "when must be an expression string in `${ ... }` form",
+		},
+		{
+			name: "invalid when string includes migration hint",
+			content: `version: "1"
+tasks:
+  - action: dir.create
+    when: darwin
+    args:
+      - ~/test
+`,
+			wantErr: "legacy mapping migration examples",
 		},
 		{
 			name: "mixed tasks with and without when",
@@ -351,7 +381,7 @@ tasks:
 			},
 		},
 		{
-			name: "combined mapping when is rejected",
+			name: "combined legacy mapping when is migrated",
 			content: `version: "1"
 tasks:
   - action: dir.create
@@ -361,7 +391,67 @@ tasks:
     args:
       - ~/test
 `,
-			wantErr: "when must be an expression string in `${ ... }` form",
+			check: func(t *testing.T, cfg *Config) {
+				require.Len(t, cfg.Tasks, 1)
+				require.NotNil(t, cfg.Tasks[0].When)
+				assert.Equal(t, `${ os in ["arch", "darwin"] and profile == "work" }`, string(*cfg.Tasks[0].When))
+			},
+		},
+		{
+			name: "legacy mapping with profile list is migrated",
+			content: `version: "1"
+tasks:
+  - action: dir.create
+    when:
+      profile:
+        - personal
+        - work
+    args:
+      - ~/test
+`,
+			check: func(t *testing.T, cfg *Config) {
+				require.Len(t, cfg.Tasks, 1)
+				require.NotNil(t, cfg.Tasks[0].When)
+				assert.Equal(t, `${ profile in ["personal", "work"] }`, string(*cfg.Tasks[0].When))
+			},
+		},
+		{
+			name: "legacy mapping with unsupported key returns migration error",
+			content: `version: "1"
+tasks:
+  - action: dir.create
+    when:
+      arch: linux
+    args:
+      - ~/test
+`,
+			wantErr: "only supports keys \"os\" and \"profile\"",
+		},
+		{
+			name: "legacy mapping with non string values returns migration error",
+			content: `version: "1"
+tasks:
+  - action: dir.create
+    when:
+      os:
+        - arch
+        - 42
+    args:
+      - ~/test
+`,
+			wantErr: "must be a string or list of strings",
+		},
+		{
+			name: "legacy mapping with empty values returns migration error",
+			content: `version: "1"
+tasks:
+  - action: dir.create
+    when:
+      profile: []
+    args:
+      - ~/test
+`,
+			wantErr: "cannot be an empty list",
 		},
 	}
 

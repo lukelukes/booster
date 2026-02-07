@@ -174,9 +174,40 @@
       ]
     },
     "when": {
-      "type": "string",
-      "pattern": "^\\s*\\$\\{[\\s\\S]*\\}\\s*$",
-      "description": "Expression string. Example: `${ os == \"darwin\" and profile == \"work\" }`"
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^\\s*\\$\\{[\\s\\S]*\\}\\s*$",
+          "description": "Expression string. Example: `${ os == \"darwin\" and profile == \"work\" }`"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "os": {
+              "$ref": "#/$defs/when-selector-values"
+            },
+            "profile": {
+              "$ref": "#/$defs/when-selector-values"
+            }
+          },
+          "description": "Legacy v1 mapping form. Equivalent to expression syntax."
+        }
+      ]
+    },
+    "when-selector-values": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
     },
     "args-dir-create": {
       "type": "array",

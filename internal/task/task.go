@@ -76,6 +76,26 @@ func (b *Builder) Build(tasks []config.Task) ([]Task, error) {
 			return nil, fmt.Errorf("task %d: unknown action %q", i+1, ct.Action)
 		}
 
+		if ct.When != nil {
+			if b.exprCtx == nil {
+				return nil, fmt.Errorf("task %d (%s): invalid when %q: expression context cannot be nil", i+1, ct.Action, formatWhenForMessage(string(*ct.When)))
+			}
+
+			whenExpr := string(*ct.When)
+			whenValue, err := expr.NewValue(whenExpr)
+			if err != nil {
+				return nil, fmt.Errorf("task %d (%s): invalid when %q: %w", i+1, ct.Action, formatWhenForMessage(whenExpr), err)
+			}
+
+			lazy := NewDeferredFactoryTask(ct.Action, ct.Args, factory, b.exprCtx, i+1)
+			conditional, err := NewConditionalTask(lazy, whenValue, b.exprCtx, whenExpr)
+			if err != nil {
+				return nil, fmt.Errorf("task %d (%s): invalid when %q: %w", i+1, ct.Action, formatWhenForMessage(whenExpr), err)
+			}
+			result = append(result, conditional)
+			continue
+		}
+
 		resolvedArgs, err := resolveTaskArgs(ct.Args, b.exprCtx)
 		if err != nil {
 			var argErr *argResolveError
@@ -90,21 +110,7 @@ func (b *Builder) Build(tasks []config.Task) ([]Task, error) {
 			return nil, fmt.Errorf("task %d (%s): %w", i+1, ct.Action, err)
 		}
 
-		for _, t := range created {
-			if ct.When != nil {
-				whenExpr := string(*ct.When)
-				whenValue, err := expr.NewValue(whenExpr)
-				if err != nil {
-					return nil, fmt.Errorf("task %d (%s): invalid when %q: %w", i+1, ct.Action, formatWhenForMessage(whenExpr), err)
-				}
-				wrapped, err := NewConditionalTask(t, whenValue, b.exprCtx, whenExpr)
-				if err != nil {
-					return nil, fmt.Errorf("task %d (%s): invalid when %q: %w", i+1, ct.Action, formatWhenForMessage(whenExpr), err)
-				}
-				t = wrapped
-			}
-			result = append(result, t)
-		}
+		result = append(result, created...)
 	}
 
 	return result, nil

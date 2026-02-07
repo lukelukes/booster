@@ -54,18 +54,6 @@ when: ${ profile in ["work", "personal"] }
 when: ${ exists(home + "/.config") }
 ```
 
-Legacy `when` mapping syntax is still accepted in v1 and migrated internally to expressions:
-
-```yaml
-# legacy
-when:
-  os: ["arch", "darwin"]
-  profile: "work"
-
-# equivalent expression
-when: ${ os in ["arch", "darwin"] and profile == "work" }
-```
-
 `args` support full expressions and interpolation:
 
 ```yaml

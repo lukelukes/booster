@@ -252,3 +252,113 @@ func TestBuilder_Build_InvalidConditionExpression(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid when")
 }
+
+func TestBuilder_Build_ResolvesArgsBeforeFactory_TableDriven(t *testing.T) {
+	ctx := expr.NewContext()
+	ctx.Home = "/tmp/home"
+
+	tests := []struct {
+		name string
+		args any
+		want any
+	}{
+		{
+			name: "full expression resolves to non string",
+			args: map[string]any{"mode": "${ 1 + 1 }"},
+			want: map[string]any{"mode": 2},
+		},
+		{
+			name: "interpolation resolves to string",
+			args: map[string]any{"path": "${ home }/app-${ 1 + 1 }"},
+			want: map[string]any{"path": "/tmp/home/app-2"},
+		},
+		{
+			name: "nested values are resolved",
+			args: map[string]any{
+				"pairs": []any{
+					map[string]any{"source": "${ home }/src", "target": "${ home }/dst"},
+				},
+			},
+			want: map[string]any{
+				"pairs": []any{
+					map[string]any{"source": "/tmp/home/src", "target": "/tmp/home/dst"},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var captured any
+			builder := NewBuilder().
+				WithExprContext(ctx).
+				Register("capture", func(args any) ([]Task, error) {
+					captured = args
+					return nil, nil
+				})
+
+			_, err := builder.Build([]config.Task{{Action: "capture", Args: tt.args}})
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, captured)
+			assert.False(t, hasUnresolvedExprToken(captured), "factory must not receive unresolved ${...} tokens")
+		})
+	}
+}
+
+func TestBuilder_Build_ArgResolutionContracts_TableDriven(t *testing.T) {
+	tests := []struct {
+		name    string
+		builder *Builder
+		task    config.Task
+		wantErr string
+	}{
+		{
+			name:    "literal args build without expression context",
+			builder: NewBuilder().Register("dir.create", NewDirCreate),
+			task: config.Task{
+				Action: "dir.create",
+				Args:   []any{"~/plain-dir"},
+			},
+		},
+		{
+			name:    "expression without context fails fast",
+			builder: NewBuilder().Register("dir.create", NewDirCreate),
+			task: config.Task{
+				Action: "dir.create",
+				Args:   []any{"${ home }/expr-dir"},
+			},
+			wantErr: "task 1 (dir.create): args[0]: expression context is required",
+		},
+		{
+			name: "invalid expression reports deterministic deep path",
+			builder: NewBuilder().
+				WithExprContext(expr.NewContext()).
+				Register("capture", func(args any) ([]Task, error) {
+					return nil, nil
+				}),
+			task: config.Task{
+				Action: "capture",
+				Args: map[string]any{
+					"items": []any{
+						map[string]any{"name": "${ 1 + }"},
+					},
+				},
+			},
+			wantErr: "task 1 (capture): args.items[0].name: invalid expression",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tt.builder.Build([]config.Task{tt.task})
+
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}

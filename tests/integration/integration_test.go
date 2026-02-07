@@ -277,3 +277,116 @@ func TestVariableResolution_ReusesStoredValues(t *testing.T) {
 	assert.Equal(t, "Bob", result["Name"])
 	assert.Equal(t, "bob@example.com", result["Email"])
 }
+
+func TestExpressionArgs_Integration_TableDriven(t *testing.T) {
+	tests := []struct {
+		name          string
+		registerExtra func(*task.Builder)
+		setupConfig   func(t *testing.T, dir string) string
+		verify        func(t *testing.T, dir string)
+	}{
+		{
+			name: "dir.create resolves interpolated home path",
+			setupConfig: func(t *testing.T, dir string) string {
+				t.Helper()
+				return `version: "1"
+tasks:
+  - action: dir.create
+    args:
+      - ${ home }/expr-dir
+`
+			},
+			verify: func(t *testing.T, dir string) {
+				t.Helper()
+				_, err := os.Stat(filepath.Join(dir, "expr-dir"))
+				assert.NoError(t, err)
+			},
+		},
+		{
+			name: "symlink.create resolves source and target expressions",
+			setupConfig: func(t *testing.T, dir string) string {
+				t.Helper()
+				source := filepath.Join(dir, "source.txt")
+				require.NoError(t, os.WriteFile(source, []byte("hello"), 0o644))
+
+				return `version: "1"
+tasks:
+  - action: symlink.create
+    args:
+      - source: ${ home }/source.txt
+        target: ${ home }/link.txt
+`
+			},
+			verify: func(t *testing.T, dir string) {
+				t.Helper()
+				link := filepath.Join(dir, "link.txt")
+				linkTarget, err := os.Readlink(link)
+				require.NoError(t, err)
+				assert.Equal(t, filepath.Join(dir, "source.txt"), linkTarget)
+			},
+		},
+		{
+			name: "template.render resolves expression args",
+			registerExtra: func(builder *task.Builder) {
+				builder.Register("template.render", task.NewTemplateRenderFactory(task.TemplateRenderConfig{
+					Vars: map[string]string{"name": "Booster"},
+				}))
+			},
+			setupConfig: func(t *testing.T, dir string) string {
+				t.Helper()
+				tmplPath := filepath.Join(dir, "input.tmpl")
+				require.NoError(t, os.WriteFile(tmplPath, []byte("hello {{ .Vars.name }}"), 0o644))
+
+				return `version: "1"
+tasks:
+  - action: template.render
+    args:
+      - source: ${ home }/input.tmpl
+        target: ${ home }/output.txt
+`
+			},
+			verify: func(t *testing.T, dir string) {
+				t.Helper()
+				outPath := filepath.Join(dir, "output.txt")
+				data, err := os.ReadFile(outPath)
+				require.NoError(t, err)
+				assert.Equal(t, "hello Booster", string(data))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "bootstrap.yaml")
+			content := tt.setupConfig(t, dir)
+			require.NoError(t, os.WriteFile(configPath, []byte(content), 0o644))
+
+			cfg, err := config.Load(configPath)
+			require.NoError(t, err)
+
+			exprCtx := expr.NewContext()
+			exprCtx.OS = "linux"
+			exprCtx.Home = dir
+
+			builder := task.DefaultBuilder(exprCtx)
+			if tt.registerExtra != nil {
+				tt.registerExtra(builder)
+			}
+
+			tasks, err := builder.Build(cfg.Tasks)
+			require.NoError(t, err)
+			require.NotEmpty(t, tasks)
+
+			exec := executor.New(tasks)
+			ctx := context.Background()
+			for range tasks {
+				result, ok := exec.RunNext(ctx)
+				require.True(t, ok)
+				require.NotEqual(t, task.StatusFailed, result.Status, result.Error)
+			}
+
+			tt.verify(t, dir)
+		})
+	}
+}

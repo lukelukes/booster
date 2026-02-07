@@ -4,6 +4,7 @@ import (
 	"booster/internal/config"
 	"booster/internal/expr"
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -75,7 +76,16 @@ func (b *Builder) Build(tasks []config.Task) ([]Task, error) {
 			return nil, fmt.Errorf("task %d: unknown action %q", i+1, ct.Action)
 		}
 
-		created, err := factory(ct.Args)
+		resolvedArgs, err := resolveTaskArgs(ct.Args, b.exprCtx)
+		if err != nil {
+			var argErr *argResolveError
+			if errors.As(err, &argErr) {
+				return nil, fmt.Errorf("task %d (%s): args%s: %v", i+1, ct.Action, argErr.path, argErr.err)
+			}
+			return nil, fmt.Errorf("task %d (%s): args: %w", i+1, ct.Action, err)
+		}
+
+		created, err := factory(resolvedArgs)
 		if err != nil {
 			return nil, fmt.Errorf("task %d (%s): %w", i+1, ct.Action, err)
 		}

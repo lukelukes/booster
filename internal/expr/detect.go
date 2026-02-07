@@ -7,17 +7,21 @@ import (
 )
 
 func detectOS() string {
-	if runtime.GOOS == "darwin" {
+	return detectOSWith(runtime.GOOS, os.ReadFile)
+}
+
+func detectOSWith(goos string, readFile func(string) ([]byte, error)) string {
+	if goos == "darwin" {
 		return "darwin"
 	}
 
-	if runtime.GOOS == "linux" {
-		if distro := parseOSRelease("/etc/os-release", os.ReadFile); distro != "" {
+	if goos == "linux" {
+		if distro := parseOSRelease("/etc/os-release", readFile); distro != "" {
 			return distro
 		}
 	}
 
-	return runtime.GOOS
+	return goos
 }
 
 func parseOSRelease(path string, readFile func(string) ([]byte, error)) string {

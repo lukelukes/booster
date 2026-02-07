@@ -201,6 +201,28 @@ tasks:
 			wantErr: "when must be an expression string in `${ ... }` form",
 		},
 		{
+			name: "empty when string is rejected",
+			content: `version: "1"
+tasks:
+  - action: dir.create
+    when: "   "
+    args:
+      - ~/test
+`,
+			wantErr: "when cannot be empty",
+		},
+		{
+			name: "malformed when missing closing brace is rejected",
+			content: `version: "1"
+tasks:
+  - action: dir.create
+    when: '${ os == "arch" '
+    args:
+      - ~/test
+`,
+			wantErr: "when must be an expression string in `${ ... }` form",
+		},
+		{
 			name: "mixed tasks with and without when",
 			content: `version: "1"
 tasks:

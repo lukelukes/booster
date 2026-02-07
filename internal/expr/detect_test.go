@@ -2,7 +2,6 @@ package expr
 
 import (
 	"errors"
-	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -59,10 +58,62 @@ func TestParseOSRelease(t *testing.T) {
 }
 
 func TestDetectOS(t *testing.T) {
-	got := detectOS()
-	assert.NotEmpty(t, got)
+	tests := []struct {
+		name          string
+		goos          string
+		fileContent   string
+		fileError     error
+		wantOS        string
+		wantReadCalls int
+	}{
+		{
+			name:          "linux with valid os-release returns distro ID",
+			goos:          "linux",
+			fileContent:   "NAME=Arch Linux\nID=arch\n",
+			wantOS:        "arch",
+			wantReadCalls: 1,
+		},
+		{
+			name:          "linux with missing os-release falls back to linux",
+			goos:          "linux",
+			fileError:     errors.New("file not found"),
+			wantOS:        "linux",
+			wantReadCalls: 1,
+		},
+		{
+			name:          "linux with invalid os-release falls back to linux",
+			goos:          "linux",
+			fileContent:   "NAME=Foo Linux\nID_LIKE=debian\n",
+			wantOS:        "linux",
+			wantReadCalls: 1,
+		},
+		{
+			name:          "darwin short-circuits without reading os-release",
+			goos:          "darwin",
+			wantOS:        "darwin",
+			wantReadCalls: 0,
+		},
+		{
+			name:          "other GOOS falls back directly",
+			goos:          "windows",
+			wantOS:        "windows",
+			wantReadCalls: 0,
+		},
+	}
 
-	if runtime.GOOS == "darwin" {
-		assert.Equal(t, "darwin", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			readCalls := 0
+			got := detectOSWith(tt.goos, func(path string) ([]byte, error) {
+				readCalls++
+				if tt.fileError != nil {
+					return nil, tt.fileError
+				}
+				return []byte(tt.fileContent), nil
+			})
+
+			assert.Equal(t, tt.wantOS, got)
+			assert.Equal(t, tt.wantReadCalls, readCalls)
+		})
 	}
 }

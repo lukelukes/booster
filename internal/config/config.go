@@ -23,35 +23,33 @@ type VariableDef struct {
 }
 
 type Task struct {
-	Args   any    `yaml:"args"`
-	When   *When  `yaml:"when,omitempty"`
-	Action string `yaml:"action"`
+	Args   any       `yaml:"args"`
+	When   *WhenExpr `yaml:"when,omitempty"`
+	Action string    `yaml:"action"`
 }
 
-type When struct {
-	Expr string
-}
+type WhenExpr string
 
-func (w *When) UnmarshalYAML(node *yaml.Node) error {
+func (w *WhenExpr) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind == 0 {
 		return nil
 	}
 
 	switch node.Kind {
 	case yaml.ScalarNode:
-		expr := strings.TrimSpace(node.Value)
-		if expr == "" {
+		value := strings.TrimSpace(node.Value)
+		if value == "" {
 			return errors.New("when cannot be empty; use an expression like `${ os == \"darwin\" }`")
 		}
-		if !strings.HasPrefix(expr, "${") || !strings.HasSuffix(expr, "}") {
-			return fmt.Errorf("when must be an expression string in `${ ... }` form, got %q", expr)
+		if !strings.HasPrefix(value, "${") || !strings.HasSuffix(value, "}") {
+			return fmt.Errorf("when must be an expression string in `${ ... }` form, got %q", value)
 		}
-		w.Expr = expr
+		*w = WhenExpr(value)
 		return nil
 	case yaml.MappingNode:
-		return errors.New("legacy `when` map syntax is no longer supported; migrate `when: { os: darwin }` to `when: ${ os == \"darwin\" }` and `when: { profile: work }` to `when: ${ profile == \"work\" }`")
+		return errors.New("when must be an expression string in `${ ... }` form")
 	default:
-		return fmt.Errorf("when must be a string expression, got YAML kind %d", node.Kind)
+		return errors.New("when must be an expression string in `${ ... }` form")
 	}
 }
 

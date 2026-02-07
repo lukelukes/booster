@@ -161,11 +161,11 @@ tasks:
 			check: func(t *testing.T, cfg *Config) {
 				require.Len(t, cfg.Tasks, 1)
 				require.NotNil(t, cfg.Tasks[0].When)
-				assert.Equal(t, `${ os == "arch" }`, cfg.Tasks[0].When.Expr)
+				assert.Equal(t, `${ os == "arch" }`, string(*cfg.Tasks[0].When))
 			},
 		},
 		{
-			name: "legacy map syntax is rejected",
+			name: "mapping when is rejected",
 			content: `version: "1"
 tasks:
   - action: dir.create
@@ -174,7 +174,7 @@ tasks:
     args:
       - ~/test
 `,
-			wantErr: "legacy `when` map syntax is no longer supported",
+			wantErr: "when must be an expression string in `${ ... }` form",
 		},
 		{
 			name: "no when",
@@ -215,7 +215,7 @@ tasks:
 			check: func(t *testing.T, cfg *Config) {
 				require.Len(t, cfg.Tasks, 2)
 				require.NotNil(t, cfg.Tasks[0].When)
-				assert.Equal(t, `${ os == "arch" }`, cfg.Tasks[0].When.Expr)
+				assert.Equal(t, `${ os == "arch" }`, string(*cfg.Tasks[0].When))
 				assert.Nil(t, cfg.Tasks[1].When)
 			},
 		},
@@ -332,7 +332,7 @@ tasks:
 			check: func(t *testing.T, cfg *Config) {
 				require.Len(t, cfg.Tasks, 1)
 				require.NotNil(t, cfg.Tasks[0].When)
-				assert.Equal(t, `${ profile == "personal" }`, cfg.Tasks[0].When.Expr)
+				assert.Equal(t, `${ profile == "personal" }`, string(*cfg.Tasks[0].When))
 			},
 		},
 		{
@@ -347,11 +347,11 @@ tasks:
 			check: func(t *testing.T, cfg *Config) {
 				require.Len(t, cfg.Tasks, 1)
 				require.NotNil(t, cfg.Tasks[0].When)
-				assert.Equal(t, `${ os == "arch" and profile in ["personal", "work"] }`, cfg.Tasks[0].When.Expr)
+				assert.Equal(t, `${ os == "arch" and profile in ["personal", "work"] }`, string(*cfg.Tasks[0].When))
 			},
 		},
 		{
-			name: "legacy combined map is rejected",
+			name: "combined mapping when is rejected",
 			content: `version: "1"
 tasks:
   - action: dir.create
@@ -361,7 +361,7 @@ tasks:
     args:
       - ~/test
 `,
-			wantErr: "legacy `when` map syntax is no longer supported",
+			wantErr: "when must be an expression string in `${ ... }` form",
 		},
 	}
 

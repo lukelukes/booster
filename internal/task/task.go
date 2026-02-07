@@ -92,13 +92,14 @@ func (b *Builder) Build(tasks []config.Task) ([]Task, error) {
 
 		for _, t := range created {
 			if ct.When != nil {
-				whenValue, err := expr.NewValue(ct.When.Expr)
+				whenExpr := string(*ct.When)
+				whenValue, err := expr.NewValue(whenExpr)
 				if err != nil {
-					return nil, fmt.Errorf("task %d (%s): invalid when %q: %w", i+1, ct.Action, formatWhenForMessage(ct.When.Expr), err)
+					return nil, fmt.Errorf("task %d (%s): invalid when %q: %w", i+1, ct.Action, formatWhenForMessage(whenExpr), err)
 				}
-				wrapped, err := NewConditionalTask(t, whenValue, b.exprCtx, ct.When.Expr)
+				wrapped, err := NewConditionalTask(t, whenValue, b.exprCtx, whenExpr)
 				if err != nil {
-					return nil, fmt.Errorf("task %d (%s): invalid when %q: %w", i+1, ct.Action, formatWhenForMessage(ct.When.Expr), err)
+					return nil, fmt.Errorf("task %d (%s): invalid when %q: %w", i+1, ct.Action, formatWhenForMessage(whenExpr), err)
 				}
 				t = wrapped
 			}

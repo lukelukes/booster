@@ -197,7 +197,7 @@ func TestBuilder_Build_WithCondition(t *testing.T) {
 
 			tasks, err := builder.Build([]config.Task{{
 				Action: "dir.create",
-				When:   &config.When{Expr: tt.whenExpr},
+				When:   func() *config.WhenExpr { w := config.WhenExpr(tt.whenExpr); return &w }(),
 				Args:   []any{"~/test"},
 			}})
 
@@ -244,7 +244,7 @@ func TestBuilder_Build_InvalidConditionExpression(t *testing.T) {
 	_, err := builder.Build([]config.Task{
 		{
 			Action: "dir.create",
-			When:   &config.When{Expr: `${ 1 + }`},
+			When:   func() *config.WhenExpr { w := config.WhenExpr(`${ 1 + }`); return &w }(),
 			Args:   []any{"~/test"},
 		},
 	})

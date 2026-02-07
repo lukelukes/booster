@@ -1,7 +1,6 @@
 package expr
 
 import (
-	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -43,9 +42,9 @@ func TestValue_FullExpression(t *testing.T) {
 		raw  string
 		want any
 	}{
-		{"os reference", "${ os }", runtime.GOOS},
+		{"os reference", "${ os }", ctx.OS},
 		{"variable reference", "${ vars.name }", "Luke"},
-		{"comparison", "${ os == \"linux\" }", runtime.GOOS == "linux"},
+		{"comparison", "${ os == \"" + ctx.OS + "\" }", true},
 		{"arithmetic", "${ 1 + 2 }", 3},
 		{"boolean logic", "${ true and false }", false},
 		{"with spaces", "${  vars.name  }", "Luke"},
@@ -79,7 +78,7 @@ func TestValue_Interpolation(t *testing.T) {
 		{"suffix only", "${ vars.name } is here", "Luke is here"},
 		{"both sides", "Hello ${ vars.name }!", "Hello Luke!"},
 		{"multiple", "${ vars.name } v${ vars.version }", "Luke v1.0"},
-		{"with os", "Running on ${ os }", "Running on " + runtime.GOOS},
+		{"with os", "Running on ${ os }", "Running on " + ctx.OS},
 	}
 
 	for _, tt := range tests {

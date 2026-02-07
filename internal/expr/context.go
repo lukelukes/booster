@@ -28,7 +28,7 @@ type TaskResult struct {
 
 func NewContext() *Context {
 	return &Context{
-		OS:    normalizeOS(runtime.GOOS),
+		OS:    normalizeOS(detectOS()),
 		Arch:  runtime.GOARCH,
 		Home:  os.Getenv("HOME"),
 		Env:   envToMap(),

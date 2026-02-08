@@ -440,7 +440,7 @@ func TestRenderFailureWithDuration(t *testing.T) {
 }
 
 func stripAnsiSimple(s string) string {
-	result := ""
+	var result strings.Builder
 	inEscape := false
 	for _, r := range s {
 		if r == '\x1b' {
@@ -453,7 +453,7 @@ func stripAnsiSimple(s string) string {
 			}
 			continue
 		}
-		result += string(r)
+		result.WriteRune(r)
 	}
-	return result
+	return result.String()
 }

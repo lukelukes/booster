@@ -10,6 +10,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func loadConfigFromContent(t *testing.T, content string) (*Config, error) {
+	t.Helper()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		return nil, err
+	}
+	return Load(configPath)
+}
+
 func TestLoad(t *testing.T) {
 	tests := []struct {
 		checkValid func(*testing.T, *Config)
@@ -106,11 +116,7 @@ tasks:
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			configPath := filepath.Join(dir, "config.yaml")
-			require.NoError(t, os.WriteFile(configPath, []byte(tt.content), 0o644))
-
-			cfg, err := Load(configPath)
+			cfg, err := loadConfigFromContent(t, tt.content)
 
 			if tt.wantErr != "" {
 				require.Error(t, err)
@@ -141,9 +147,25 @@ func TestLoad_WhenCondition(t *testing.T) {
 		check   func(*testing.T, *Config)
 		name    string
 		content string
+		wantErr string
 	}{
 		{
-			name: "single OS string",
+			name: "expression when string",
+			content: `version: "1"
+tasks:
+  - action: dir.create
+    when: ${ os == "arch" }
+    args:
+      - ~/test
+`,
+			check: func(t *testing.T, cfg *Config) {
+				require.Len(t, cfg.Tasks, 1)
+				require.NotNil(t, cfg.Tasks[0].When)
+				assert.Equal(t, `${ os == "arch" }`, string(*cfg.Tasks[0].When))
+			},
+		},
+		{
+			name: "mapping when is rejected",
 			content: `version: "1"
 tasks:
   - action: dir.create
@@ -152,30 +174,10 @@ tasks:
     args:
       - ~/test
 `,
-			check: func(t *testing.T, cfg *Config) {
-				require.Len(t, cfg.Tasks, 1)
-				require.NotNil(t, cfg.Tasks[0].When)
-				assert.Equal(t, StringOrSlice{"arch"}, cfg.Tasks[0].When.OS)
-			},
+			wantErr: "when must be an expression string in `${ ... }` form",
 		},
 		{
-			name: "multiple OS array",
-			content: `version: "1"
-tasks:
-  - action: dir.create
-    when:
-      os: ["arch", "darwin"]
-    args:
-      - ~/test
-`,
-			check: func(t *testing.T, cfg *Config) {
-				require.Len(t, cfg.Tasks, 1)
-				require.NotNil(t, cfg.Tasks[0].When)
-				assert.Equal(t, StringOrSlice{"arch", "darwin"}, cfg.Tasks[0].When.OS)
-			},
-		},
-		{
-			name: "no when condition",
+			name: "no when",
 			content: `version: "1"
 tasks:
   - action: dir.create
@@ -188,27 +190,44 @@ tasks:
 			},
 		},
 		{
-			name: "empty when",
+			name: "non-expression when string is rejected",
 			content: `version: "1"
 tasks:
   - action: dir.create
-    when: {}
+    when: arch
     args:
       - ~/test
 `,
-			check: func(t *testing.T, cfg *Config) {
-				require.Len(t, cfg.Tasks, 1)
-				require.NotNil(t, cfg.Tasks[0].When)
-				assert.Empty(t, cfg.Tasks[0].When.OS)
-			},
+			wantErr: "when must be an expression string in `${ ... }` form",
+		},
+		{
+			name: "empty when string is rejected",
+			content: `version: "1"
+tasks:
+  - action: dir.create
+    when: "   "
+    args:
+      - ~/test
+`,
+			wantErr: "when cannot be empty",
+		},
+		{
+			name: "malformed when missing closing brace is rejected",
+			content: `version: "1"
+tasks:
+  - action: dir.create
+    when: '${ os == "arch" '
+    args:
+      - ~/test
+`,
+			wantErr: "when must be an expression string in `${ ... }` form",
 		},
 		{
 			name: "mixed tasks with and without when",
 			content: `version: "1"
 tasks:
   - action: dir.create
-    when:
-      os: "arch"
+    when: ${ os == "arch" }
     args:
       - ~/arch-only
   - action: dir.create
@@ -218,7 +237,7 @@ tasks:
 			check: func(t *testing.T, cfg *Config) {
 				require.Len(t, cfg.Tasks, 2)
 				require.NotNil(t, cfg.Tasks[0].When)
-				assert.Equal(t, StringOrSlice{"arch"}, cfg.Tasks[0].When.OS)
+				assert.Equal(t, `${ os == "arch" }`, string(*cfg.Tasks[0].When))
 				assert.Nil(t, cfg.Tasks[1].When)
 			},
 		},
@@ -226,11 +245,13 @@ tasks:
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			configPath := filepath.Join(dir, "config.yaml")
-			require.NoError(t, os.WriteFile(configPath, []byte(tt.content), 0o644))
+			cfg, err := loadConfigFromContent(t, tt.content)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
 
-			cfg, err := Load(configPath)
 			require.NoError(t, err)
 			tt.check(t, cfg)
 		})
@@ -244,36 +265,23 @@ func TestStringOrSlice_UnmarshalYAML(t *testing.T) {
 		want    StringOrSlice
 		wantErr bool
 	}{
-		{
-			name: "single string",
-			yaml: `os: arch`,
-			want: StringOrSlice{"arch"},
-		},
-		{
-			name: "array",
-			yaml: `os: [arch, darwin]`,
-			want: StringOrSlice{"arch", "darwin"},
-		},
-		{
-			name: "multiline array",
-			yaml: `os:
-  - arch
-  - ubuntu
-  - fedora`,
-			want: StringOrSlice{"arch", "ubuntu", "fedora"},
-		},
+		{name: "single string", yaml: `value: arch`, want: StringOrSlice{"arch"}},
+		{name: "array", yaml: `value: [arch, darwin]`, want: StringOrSlice{"arch", "darwin"}},
+		{name: "multiline array", yaml: "value:\n  - arch\n  - ubuntu\n  - fedora", want: StringOrSlice{"arch", "ubuntu", "fedora"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var w When
-			err := yaml.Unmarshal([]byte(tt.yaml), &w)
+			var v struct {
+				Value StringOrSlice `yaml:"value"`
+			}
+			err := yaml.Unmarshal([]byte(tt.yaml), &v)
 			if tt.wantErr {
 				require.Error(t, err)
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, tt.want, w.OS)
+			assert.Equal(t, tt.want, v.Value)
 		})
 	}
 }
@@ -320,99 +328,73 @@ tasks: []
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			configPath := filepath.Join(dir, "config.yaml")
-			require.NoError(t, os.WriteFile(configPath, []byte(tt.content), 0o644))
-
-			cfg, err := Load(configPath)
+			cfg, err := loadConfigFromContent(t, tt.content)
 			require.NoError(t, err)
 			tt.check(t, cfg)
 		})
 	}
 }
 
-func TestLoad_WhenProfileCondition(t *testing.T) {
+func TestLoad_WhenExpressionsForProfileAndOS(t *testing.T) {
 	tests := []struct {
 		check   func(*testing.T, *Config)
 		name    string
 		content string
+		wantErr string
 	}{
 		{
-			name: "single profile string",
+			name: "profile expression",
 			content: `version: "1"
 tasks:
   - action: dir.create
-    when:
-      profile: "personal"
+    when: ${ profile == "personal" }
     args:
       - ~/test
 `,
 			check: func(t *testing.T, cfg *Config) {
 				require.Len(t, cfg.Tasks, 1)
 				require.NotNil(t, cfg.Tasks[0].When)
-				assert.Equal(t, StringOrSlice{"personal"}, cfg.Tasks[0].When.Profile)
+				assert.Equal(t, `${ profile == "personal" }`, string(*cfg.Tasks[0].When))
 			},
 		},
 		{
-			name: "multiple profiles array",
+			name: "combined expression",
 			content: `version: "1"
 tasks:
   - action: dir.create
-    when:
-      profile: ["personal", "work"]
+    when: ${ os == "arch" and profile in ["personal", "work"] }
     args:
       - ~/test
 `,
 			check: func(t *testing.T, cfg *Config) {
 				require.Len(t, cfg.Tasks, 1)
 				require.NotNil(t, cfg.Tasks[0].When)
-				assert.Equal(t, StringOrSlice{"personal", "work"}, cfg.Tasks[0].When.Profile)
+				assert.Equal(t, `${ os == "arch" and profile in ["personal", "work"] }`, string(*cfg.Tasks[0].When))
 			},
 		},
 		{
-			name: "combined OS and profile conditions",
+			name: "combined mapping when is rejected",
 			content: `version: "1"
 tasks:
   - action: dir.create
     when:
-      os: "arch"
+      os: ["arch", "darwin"]
       profile: "work"
     args:
       - ~/test
 `,
-			check: func(t *testing.T, cfg *Config) {
-				require.Len(t, cfg.Tasks, 1)
-				require.NotNil(t, cfg.Tasks[0].When)
-				assert.Equal(t, StringOrSlice{"arch"}, cfg.Tasks[0].When.OS)
-				assert.Equal(t, StringOrSlice{"work"}, cfg.Tasks[0].When.Profile)
-			},
-		},
-		{
-			name: "profile without OS",
-			content: `version: "1"
-tasks:
-  - action: dir.create
-    when:
-      profile: "personal"
-    args:
-      - ~/test
-`,
-			check: func(t *testing.T, cfg *Config) {
-				require.Len(t, cfg.Tasks, 1)
-				require.NotNil(t, cfg.Tasks[0].When)
-				assert.Empty(t, cfg.Tasks[0].When.OS)
-				assert.Equal(t, StringOrSlice{"personal"}, cfg.Tasks[0].When.Profile)
-			},
+			wantErr: "when must be an expression string in `${ ... }` form",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			configPath := filepath.Join(dir, "config.yaml")
-			require.NoError(t, os.WriteFile(configPath, []byte(tt.content), 0o644))
-
-			cfg, err := Load(configPath)
+			cfg, err := loadConfigFromContent(t, tt.content)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
 			require.NoError(t, err)
 			tt.check(t, cfg)
 		})
@@ -473,11 +455,7 @@ tasks: []
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			configPath := filepath.Join(dir, "config.yaml")
-			require.NoError(t, os.WriteFile(configPath, []byte(tt.content), 0o644))
-
-			cfg, err := Load(configPath)
+			cfg, err := loadConfigFromContent(t, tt.content)
 			require.NoError(t, err)
 			tt.check(t, cfg)
 		})

@@ -2,8 +2,8 @@ package main
 
 import (
 	"booster/internal/cmdexec"
-	"booster/internal/condition"
 	"booster/internal/config"
+	"booster/internal/expr"
 	"booster/internal/task"
 	"booster/internal/tui"
 	"booster/internal/variable"
@@ -51,21 +51,25 @@ func (c *RunCmd) Run(cli *CLI) error {
 		return fmt.Errorf("resolve variables: %w", err)
 	}
 
-	detector := &condition.SystemDetector{}
-	sysCtx := detector.Detect()
-	sysCtx.Profile = profile
+	exprCtx := expr.NewContext().WithProfile(profile)
+	sysOS := exprCtx.OS
+	varsAny := make(map[string]any, len(vars))
+	for k, v := range vars {
+		varsAny[k] = v
+	}
+	exprCtx = exprCtx.WithVars(varsAny)
 
 	configDir := filepath.Dir(cli.Config)
 
-	builder := task.DefaultBuilder(sysCtx)
+	builder := task.DefaultBuilder(exprCtx)
 	builder.Register("template.render", task.NewTemplateRenderFactory(task.TemplateRenderConfig{
 		Vars:    vars,
-		OS:      sysCtx.OS,
-		Profile: sysCtx.Profile,
+		OS:      sysOS,
+		Profile: profile,
 	}))
 	builder.Register("pkg-manager.install", task.NewPkgManagerInstallFactory(nil))
 	builder.Register("pkg.install", task.NewPkgInstallFactory(task.PkgInstallConfig{
-		OS: sysCtx.OS,
+		OS: sysOS,
 	}))
 	builder.Register("mise.use", task.NewMiseUseFactory(task.MiseUseConfig{}))
 	builder.Register("git.config", task.NewGitConfig(
@@ -73,7 +77,7 @@ func (c *RunCmd) Run(cli *CLI) error {
 		tui.NewHuhPrompter(),
 	))
 	builder.Register("set.darwin.defaults", task.NewDarwinDefaultsFactory(task.DarwinDefaultsConfig{
-		OS:        sysCtx.OS,
+		OS:        sysOS,
 		ConfigDir: configDir,
 	}))
 

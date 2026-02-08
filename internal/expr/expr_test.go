@@ -1,7 +1,6 @@
 package expr
 
 import (
-	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -43,9 +42,9 @@ func TestValue_FullExpression(t *testing.T) {
 		raw  string
 		want any
 	}{
-		{"os reference", "${ os }", runtime.GOOS},
+		{"os reference", "${ os }", ctx.OS},
 		{"variable reference", "${ vars.name }", "Luke"},
-		{"comparison", "${ os == \"linux\" }", runtime.GOOS == "linux"},
+		{"comparison", "${ os == \"" + ctx.OS + "\" }", true},
 		{"arithmetic", "${ 1 + 2 }", 3},
 		{"boolean logic", "${ true and false }", false},
 		{"with spaces", "${  vars.name  }", "Luke"},
@@ -79,7 +78,7 @@ func TestValue_Interpolation(t *testing.T) {
 		{"suffix only", "${ vars.name } is here", "Luke is here"},
 		{"both sides", "Hello ${ vars.name }!", "Hello Luke!"},
 		{"multiple", "${ vars.name } v${ vars.version }", "Luke v1.0"},
-		{"with os", "Running on ${ os }", "Running on " + runtime.GOOS},
+		{"with os", "Running on ${ os }", "Running on " + ctx.OS},
 	}
 
 	for _, tt := range tests {
@@ -170,7 +169,6 @@ func TestContext_WithProfile(t *testing.T) {
 func TestContext_EnvAccess(t *testing.T) {
 	ctx := NewContext()
 
-	// HOME should always be set
 	v, err := NewValue("${ env.HOME }")
 	require.NoError(t, err)
 
@@ -182,7 +180,6 @@ func TestContext_EnvAccess(t *testing.T) {
 func TestValue_BuiltinContainsOperator(t *testing.T) {
 	ctx := NewContext()
 
-	// expr-lang's contains works on strings
 	tests := []struct {
 		name string
 		raw  string
@@ -207,7 +204,6 @@ func TestValue_BuiltinContainsOperator(t *testing.T) {
 func TestValue_InOperator(t *testing.T) {
 	ctx := NewContext()
 
-	// For list membership, use the 'in' operator
 	tests := []struct {
 		name string
 		raw  string
@@ -239,30 +235,23 @@ func TestResolveCondition(t *testing.T) {
 		wantRun   bool
 		wantError bool
 	}{
-		// Nil/empty should always run
 		{"empty string", "", true, false},
 
-		// Boolean expressions
 		{"true literal", "${ true }", true, false},
 		{"false literal", "${ false }", false, false},
 
-		// OS conditions
 		{"os match", "${ os == \"" + ctx.OS + "\" }", true, false},
 		{"os mismatch", "${ os == \"windows\" }", false, false},
 
-		// Profile conditions
 		{"profile match", "${ profile == \"work\" }", true, false},
 		{"profile mismatch", "${ profile == \"personal\" }", false, false},
 
-		// Combined conditions
 		{"and - both true", "${ true and true }", true, false},
 		{"and - one false", "${ true and false }", false, false},
 		{"or - one true", "${ false or true }", true, false},
 
-		// Function-based conditions
 		{"installed check", "${ installed(\"git\") }", true, false},
 
-		// Error cases: non-bool result
 		{"string result", "${ \"hello\" }", false, true},
 		{"int result", "${ 42 }", false, true},
 	}

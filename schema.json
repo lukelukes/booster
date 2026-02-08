@@ -22,9 +22,21 @@
     },
     "variables": {
       "type": "object",
-      "description": "Variable definitions for template rendering",
+      "description": "Variable definitions used for prompts and templates",
       "additionalProperties": {
-        "type": "string"
+        "type": "object",
+        "required": ["prompt"],
+        "additionalProperties": false,
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "description": "Prompt shown to collect the variable value"
+          },
+          "default": {
+            "type": "string",
+            "description": "Optional default value"
+          }
+        }
       }
     },
     "tasks": {
@@ -56,7 +68,7 @@
         },
         "when": {
           "$ref": "#/$defs/when",
-          "description": "Conditional execution based on OS or profile"
+          "description": "Conditional execution expression in `${ ... }` form"
         },
         "args": {
           "description": "Action-specific arguments"
@@ -162,42 +174,9 @@
       ]
     },
     "when": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "os": {
-          "oneOf": [
-            {
-              "type": "string",
-              "enum": ["darwin", "arch"],
-              "description": "Single OS to match"
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "enum": ["darwin", "arch"]
-              },
-              "description": "List of OSes to match (any match = execute)"
-            }
-          ],
-          "description": "Operating system condition"
-        },
-        "profile": {
-          "oneOf": [
-            {
-              "type": "string",
-              "description": "Single profile to match"
-            },
-            {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "List of profiles to match (any match = execute)"
-            }
-          ],
-          "description": "Profile condition"
-        }
-      }
+      "type": "string",
+      "pattern": "^\\s*\\$\\{[\\s\\S]*\\}\\s*$",
+      "description": "Expression string. Example: `${ os == \"darwin\" and profile == \"work\" }`"
     },
     "args-dir-create": {
       "type": "array",

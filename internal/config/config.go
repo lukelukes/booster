@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -22,14 +23,34 @@ type VariableDef struct {
 }
 
 type Task struct {
-	Args   any    `yaml:"args"`
-	When   *When  `yaml:"when,omitempty"`
-	Action string `yaml:"action"`
+	Args   any       `yaml:"args"`
+	When   *WhenExpr `yaml:"when,omitempty"`
+	Action string    `yaml:"action"`
 }
 
-type When struct {
-	OS      StringOrSlice `yaml:"os,omitempty"`
-	Profile StringOrSlice `yaml:"profile,omitempty"`
+type WhenExpr string
+
+func (w *WhenExpr) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == 0 {
+		return nil
+	}
+
+	switch node.Kind {
+	case yaml.ScalarNode:
+		value := strings.TrimSpace(node.Value)
+		if value == "" {
+			return errors.New("when cannot be empty; use an expression like `${ os == \"darwin\" }`")
+		}
+		if !strings.HasPrefix(value, "${") || !strings.HasSuffix(value, "}") {
+			return fmt.Errorf("when must be an expression string in `${ ... }` form, got %q", value)
+		}
+		*w = WhenExpr(value)
+		return nil
+	case yaml.MappingNode:
+		return errors.New("when must be an expression string in `${ ... }` form")
+	default:
+		return errors.New("when must be an expression string in `${ ... }` form")
+	}
 }
 
 type StringOrSlice []string

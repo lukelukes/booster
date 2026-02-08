@@ -1,4 +1,4 @@
-package condition
+package expr
 
 import (
 	"os"
@@ -6,36 +6,22 @@ import (
 	"strings"
 )
 
-type Detector interface {
-	Detect() Context
+func detectOS() string {
+	return detectOSWith(runtime.GOOS, os.ReadFile)
 }
 
-type SystemDetector struct {
-	ReadFile func(string) ([]byte, error)
-}
-
-func (d *SystemDetector) Detect() Context {
-	readFile := d.ReadFile
-	if readFile == nil {
-		readFile = os.ReadFile
-	}
-	return Context{
-		OS: detectOS(readFile),
-	}
-}
-
-func detectOS(readFile func(string) ([]byte, error)) string {
-	if runtime.GOOS == "darwin" {
+func detectOSWith(goos string, readFile func(string) ([]byte, error)) string {
+	if goos == "darwin" {
 		return "darwin"
 	}
 
-	if runtime.GOOS == "linux" {
+	if goos == "linux" {
 		if distro := parseOSRelease("/etc/os-release", readFile); distro != "" {
 			return distro
 		}
 	}
 
-	return runtime.GOOS
+	return goos
 }
 
 func parseOSRelease(path string, readFile func(string) ([]byte, error)) string {
@@ -50,8 +36,7 @@ func parseOSReleaseContent(content string) string {
 	for line := range strings.SplitSeq(content, "\n") {
 		line = strings.TrimSpace(line)
 		if after, ok := strings.CutPrefix(line, "ID="); ok {
-			value := after
-
+			value := strings.TrimSpace(after)
 			value = strings.Trim(value, `"'`)
 			return value
 		}

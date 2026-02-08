@@ -1,9 +1,10 @@
 package task
 
 import (
-	"booster/internal/condition"
 	"booster/internal/config"
+	"booster/internal/expr"
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -47,7 +48,7 @@ func AnyNeedsSudo(tasks []Task) bool {
 
 type Builder struct {
 	factories map[string]Factory
-	evaluator *condition.Evaluator
+	exprCtx   *expr.Context
 }
 
 func NewBuilder() *Builder {
@@ -61,8 +62,8 @@ func (b *Builder) Register(action string, factory Factory) *Builder {
 	return b
 }
 
-func (b *Builder) WithEvaluator(eval *condition.Evaluator) *Builder {
-	b.evaluator = eval
+func (b *Builder) WithExprContext(ctx *expr.Context) *Builder {
+	b.exprCtx = ctx
 	return b
 }
 
@@ -75,35 +76,49 @@ func (b *Builder) Build(tasks []config.Task) ([]Task, error) {
 			return nil, fmt.Errorf("task %d: unknown action %q", i+1, ct.Action)
 		}
 
-		created, err := factory(ct.Args)
+		if ct.When != nil {
+			if b.exprCtx == nil {
+				return nil, fmt.Errorf("task %d (%s): invalid when %q: expression context cannot be nil", i+1, ct.Action, formatWhenForMessage(string(*ct.When)))
+			}
+
+			whenExpr := string(*ct.When)
+			whenValue, err := expr.NewValue(whenExpr)
+			if err != nil {
+				return nil, fmt.Errorf("task %d (%s): invalid when %q: %w", i+1, ct.Action, formatWhenForMessage(whenExpr), err)
+			}
+
+			lazy := NewDeferredFactoryTask(ct.Action, ct.Args, factory, b.exprCtx, i+1)
+			conditional, err := NewConditionalTask(lazy, whenValue, b.exprCtx, whenExpr)
+			if err != nil {
+				return nil, fmt.Errorf("task %d (%s): invalid when %q: %w", i+1, ct.Action, formatWhenForMessage(whenExpr), err)
+			}
+			result = append(result, conditional)
+			continue
+		}
+
+		resolvedArgs, err := resolveTaskArgs(ct.Args, b.exprCtx)
+		if err != nil {
+			var argErr *argResolveError
+			if errors.As(err, &argErr) {
+				return nil, fmt.Errorf("task %d (%s): args%s: %v", i+1, ct.Action, argErr.path, argErr.err)
+			}
+			return nil, fmt.Errorf("task %d (%s): args: %w", i+1, ct.Action, err)
+		}
+
+		created, err := factory(resolvedArgs)
 		if err != nil {
 			return nil, fmt.Errorf("task %d (%s): %w", i+1, ct.Action, err)
 		}
 
-		for _, t := range created {
-			if b.evaluator != nil && ct.When != nil {
-				cond := &condition.Condition{
-					OS:      ct.When.OS,
-					Profile: ct.When.Profile,
-				}
-				wrapped, err := NewConditionalTask(t, cond, b.evaluator)
-				if err != nil {
-					return nil, fmt.Errorf("task %d (%s): %w", i+1, ct.Action, err)
-				}
-				t = wrapped
-			}
-			result = append(result, t)
-		}
+		result = append(result, created...)
 	}
 
 	return result, nil
 }
 
-func DefaultBuilder(ctx condition.Context) *Builder {
-	eval := condition.NewEvaluator(ctx)
-
+func DefaultBuilder(ctx *expr.Context) *Builder {
 	return NewBuilder().
-		WithEvaluator(eval).
+		WithExprContext(ctx).
 		Register("dir.create", NewDirCreate).
 		Register("symlink.create", NewSymlinkCreate)
 }

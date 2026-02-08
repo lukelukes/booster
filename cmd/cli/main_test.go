@@ -22,31 +22,83 @@ func setupTestConfig(t *testing.T, content string) (*CLI, *RunCmd) {
 	return cli, cmd
 }
 
-func TestRunCmd_LoadsConfig(t *testing.T) {
-	content := `version: "1"
+func setupTestConfigWithCmd(t *testing.T, content string, cmd RunCmd) (*CLI, *RunCmd) {
+	t.Helper()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "bootstrap.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(content), 0o644))
+
+	cmdCopy := cmd
+	cli := &CLI{Config: configPath}
+
+	return cli, &cmdCopy
+}
+
+func TestRunCmd_CoreScenarios(t *testing.T) {
+	tests := []struct {
+		name           string
+		content        string
+		configPathOnly bool
+		errContain     string
+	}{
+		{
+			name: "loads basic config",
+			content: `version: "1"
 tasks:
   - action: dir.create
     args:
       - ~/.config/test
-`
-	cli, cmd := setupTestConfig(t, content)
+`,
+		},
+		{
+			name:           "config not found",
+			configPathOnly: true,
+			errContain:     "load config",
+		},
+		{
+			name: "unknown action",
+			content: `version: "1"
+tasks:
+  - action: unknown.action.type
+    args: {}
+`,
+			errContain: "unknown action",
+		},
+		{
+			name: "empty tasks succeeds",
+			content: `version: "1"
+tasks: []
+`,
+		},
+	}
 
-	err := cmd.Run(cli)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var (
+				cli *CLI
+				cmd *RunCmd
+			)
 
-	require.NoError(t, err)
-}
+			if tt.configPathOnly {
+				dir := t.TempDir()
+				nonexistentPath := filepath.Join(dir, "does-not-exist.yaml")
+				cmd = &RunCmd{DryRun: true}
+				cli = &CLI{Config: nonexistentPath}
+			} else {
+				cli, cmd = setupTestConfig(t, tt.content)
+			}
 
-func TestRunCmd_ConfigNotFound(t *testing.T) {
-	dir := t.TempDir()
-	nonexistentPath := filepath.Join(dir, "does-not-exist.yaml")
+			err := cmd.Run(cli)
+			if tt.errContain == "" {
+				require.NoError(t, err)
+				return
+			}
 
-	cmd := &RunCmd{DryRun: true}
-	cli := &CLI{Config: nonexistentPath}
-
-	err := cmd.Run(cli)
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "load config")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errContain)
+		})
+	}
 }
 
 func TestRunCmd_InvalidConfig(t *testing.T) {
@@ -90,32 +142,6 @@ tasks: []
 			assert.Contains(t, err.Error(), tt.errContain)
 		})
 	}
-}
-
-func TestRunCmd_UnknownAction(t *testing.T) {
-	content := `version: "1"
-tasks:
-  - action: unknown.action.type
-    args: {}
-`
-	cli, cmd := setupTestConfig(t, content)
-
-	err := cmd.Run(cli)
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown action")
-	assert.Contains(t, err.Error(), "unknown.action.type")
-}
-
-func TestRunCmd_EmptyTasks(t *testing.T) {
-	content := `version: "1"
-tasks: []
-`
-	cli, cmd := setupTestConfig(t, content)
-
-	err := cmd.Run(cli)
-
-	require.NoError(t, err)
 }
 
 func TestRunCmd_BuildsTasks(t *testing.T) {
@@ -220,8 +246,7 @@ func TestRunCmd_ConditionalTasks(t *testing.T) {
 			content: `version: "1"
 tasks:
   - action: dir.create
-    when:
-      os: "arch"
+    when: ${ os == "arch" }
     args:
       - ~/.config/arch-only
 `,
@@ -231,8 +256,7 @@ tasks:
 			content: `version: "1"
 tasks:
   - action: dir.create
-    when:
-      os: ["arch", "darwin"]
+    when: ${ os in ["arch", "darwin"] }
     args:
       - ~/.config/multi-os
 `,
@@ -242,8 +266,7 @@ tasks:
 			content: `version: "1"
 tasks:
   - action: dir.create
-    when:
-      os: "arch"
+    when: ${ os == "arch" }
     args:
       - ~/.config/arch-only
   - action: dir.create
@@ -264,48 +287,49 @@ tasks:
 	}
 }
 
-func TestRunCmd_TemplateTask(t *testing.T) {
-	content := `version: "1"
+func TestRunCmd_SupportedActionTasks(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{
+			name: "template.render",
+			content: `version: "1"
 tasks:
   - action: template.render
     args:
       - source: ~/templates/config.tmpl
         target: ~/.config/app/config
-`
-	cli, cmd := setupTestConfig(t, content)
-
-	err := cmd.Run(cli)
-
-	require.NoError(t, err)
-}
-
-func TestRunCmd_PkgInstallTask(t *testing.T) {
-	content := `version: "1"
+`,
+		},
+		{
+			name: "pkg.install",
+			content: `version: "1"
 tasks:
   - action: pkg.install
     args:
       - vim
       - git
-`
-	cli, cmd := setupTestConfig(t, content)
-
-	err := cmd.Run(cli)
-
-	require.NoError(t, err)
-}
-
-func TestRunCmd_PkgManagerInstallTask(t *testing.T) {
-	content := `version: "1"
+`,
+		},
+		{
+			name: "pkg-manager.install",
+			content: `version: "1"
 tasks:
   - action: pkg-manager.install
     args:
       - yay
-`
-	cli, cmd := setupTestConfig(t, content)
+`,
+		},
+	}
 
-	err := cmd.Run(cli)
-
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cli, cmd := setupTestConfig(t, tt.content)
+			err := cmd.Run(cli)
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestVersionCmd(t *testing.T) {
@@ -342,8 +366,7 @@ tasks:
       - git
       - ripgrep
   - action: dir.create
-    when:
-      os: "arch"
+    when: ${ os == "arch" }
     args:
       - ~/.config/i3
 `
@@ -354,23 +377,27 @@ tasks:
 	require.NoError(t, err)
 }
 
-func TestRunCmd_BackwardsCompatibility_IgnoresUnknownFields(t *testing.T) {
-	content := `version: "1"
+func TestRunCmd_ProfileAndCompatibilityScenarios(t *testing.T) {
+	tests := []struct {
+		name       string
+		content    string
+		cmd        RunCmd
+		errContain string
+	}{
+		{
+			name: "ignores unknown fields for compatibility",
+			content: `version: "1"
 tasks:
   - action: pkg-manager.install
     prompt_for_sudo: true
     args:
       - yay
-`
-	cli, cmd := setupTestConfig(t, content)
-
-	err := cmd.Run(cli)
-
-	require.NoError(t, err)
-}
-
-func TestRunCmd_ProfileFlag_Works(t *testing.T) {
-	content := `version: "1"
+`,
+			cmd: RunCmd{DryRun: true},
+		},
+		{
+			name: "profile works when valid",
+			content: `version: "1"
 profiles:
   - personal
   - work
@@ -378,121 +405,86 @@ tasks:
   - action: dir.create
     args:
       - ~/.config/test
-`
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "bootstrap.yaml")
-	require.NoError(t, os.WriteFile(configPath, []byte(content), 0o644))
-
-	cmd := &RunCmd{DryRun: true, Profile: "personal"}
-	cli := &CLI{Config: configPath}
-
-	err := cmd.Run(cli)
-
-	require.NoError(t, err)
-}
-
-func TestRunCmd_ProfileFlag_InvalidProfile(t *testing.T) {
-	content := `version: "1"
+`,
+			cmd: RunCmd{DryRun: true, Profile: "personal"},
+		},
+		{
+			name: "invalid profile returns error",
+			content: `version: "1"
 profiles:
   - personal
   - work
 tasks: []
-`
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "bootstrap.yaml")
-	require.NoError(t, os.WriteFile(configPath, []byte(content), 0o644))
-
-	cmd := &RunCmd{DryRun: true, Profile: "invalid"}
-	cli := &CLI{Config: configPath}
-
-	err := cmd.Run(cli)
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid profile")
-	assert.Contains(t, err.Error(), "invalid")
-}
-
-func TestRunCmd_ProfileFlag_MissingWithProfiles(t *testing.T) {
-	content := `version: "1"
+`,
+			cmd:        RunCmd{DryRun: true, Profile: "invalid"},
+			errContain: "invalid profile",
+		},
+		{
+			name: "missing profile when profiles defined returns error",
+			content: `version: "1"
 profiles:
   - personal
   - work
 tasks: []
-`
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "bootstrap.yaml")
-	require.NoError(t, os.WriteFile(configPath, []byte(content), 0o644))
-
-	cmd := &RunCmd{DryRun: true, Profile: ""}
-	cli := &CLI{Config: configPath}
-
-	err := cmd.Run(cli)
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--profile")
-}
-
-func TestRunCmd_ProfileFlag_NotNeededWithoutProfiles(t *testing.T) {
-	content := `version: "1"
+`,
+			cmd:        RunCmd{DryRun: true},
+			errContain: "--profile",
+		},
+		{
+			name: "profile not required without profiles",
+			content: `version: "1"
 tasks:
   - action: dir.create
     args:
       - ~/.config/test
-`
-	cli, cmd := setupTestConfig(t, content)
-
-	err := cmd.Run(cli)
-
-	require.NoError(t, err)
-}
-
-func TestRunCmd_ProfileFlag_ErrorWhenNoProfilesInConfig(t *testing.T) {
-	content := `version: "1"
+`,
+			cmd: RunCmd{DryRun: true},
+		},
+		{
+			name: "profile specified but no profiles in config returns error",
+			content: `version: "1"
 tasks: []
-`
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "bootstrap.yaml")
-	require.NoError(t, os.WriteFile(configPath, []byte(content), 0o644))
-
-	cmd := &RunCmd{DryRun: true, Profile: "personal"}
-	cli := &CLI{Config: configPath}
-
-	err := cmd.Run(cli)
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no profiles defined")
-}
-
-func TestRunCmd_ProfileConditionFilters(t *testing.T) {
-	content := `version: "1"
+`,
+			cmd:        RunCmd{DryRun: true, Profile: "personal"},
+			errContain: "no profiles defined",
+		},
+		{
+			name: "profile condition filters are accepted",
+			content: `version: "1"
 profiles:
   - personal
   - work
 tasks:
   - action: dir.create
-    when:
-      profile: "personal"
+    when: ${ profile == "personal" }
     args:
       - ~/.config/personal-only
   - action: dir.create
-    when:
-      profile: "work"
+    when: ${ profile == "work" }
     args:
       - ~/.config/work-only
   - action: dir.create
     args:
       - ~/.config/always
-`
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "bootstrap.yaml")
-	require.NoError(t, os.WriteFile(configPath, []byte(content), 0o644))
+`,
+			cmd: RunCmd{DryRun: true, Profile: "personal"},
+		},
+	}
 
-	cmd := &RunCmd{DryRun: true, Profile: "personal"}
-	cli := &CLI{Config: configPath}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cli, cmd := setupTestConfigWithCmd(t, tt.content, tt.cmd)
+			err := cmd.Run(cli)
 
-	err := cmd.Run(cli)
+			if tt.errContain == "" {
+				require.NoError(t, err)
+				return
+			}
 
-	require.NoError(t, err)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errContain)
+		})
+	}
 }
 
 func TestRunCmd_ConfigWithVariablesLoads(t *testing.T) {

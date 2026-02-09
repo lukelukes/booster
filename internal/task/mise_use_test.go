@@ -10,6 +10,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func newMiseAvailableRunner(run func(context.Context, string, ...string) ([]byte, error)) *cmdexec.MockRunner {
+	return &cmdexec.MockRunner{
+		RunFunc: run,
+		LookPathFunc: func(name string) (string, error) {
+			if name == "mise" {
+				return "/usr/bin/mise", nil
+			}
+
+			return "", errors.New("not found")
+		},
+	}
+}
+
+func newMiseUnavailableRunner() *cmdexec.MockRunner {
+	return &cmdexec.MockRunner{
+		LookPathFunc: func(string) (string, error) {
+			return "", errors.New("not found")
+		},
+	}
+}
+
 func TestParseToolSpec_Valid(t *testing.T) {
 	tests := []struct {
 		input   string
@@ -142,25 +163,17 @@ func TestMiseUse_Name_BoundaryConditions(t *testing.T) {
 }
 
 func TestMiseUse_SkipsWhenAllAtCorrectVersion(t *testing.T) {
-	mock := &cmdexec.MockRunner{
-		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
-			if name == "mise" && len(args) >= 2 && args[0] == "current" {
-				switch args[1] {
-				case "go":
-					return []byte("1.22.0\n"), nil
-				case "node":
-					return []byte("20.10.0\n"), nil
-				}
+	mock := newMiseAvailableRunner(func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name == "mise" && len(args) >= 2 && args[0] == "current" {
+			switch args[1] {
+			case "go":
+				return []byte("1.22.0\n"), nil
+			case "node":
+				return []byte("20.10.0\n"), nil
 			}
-			return nil, errors.New("unexpected command")
-		},
-		LookPathFunc: func(name string) (string, error) {
-			if name == "mise" {
-				return "/usr/bin/mise", nil
-			}
-			return "", errors.New("not found")
-		},
-	}
+		}
+		return nil, errors.New("unexpected command")
+	})
 
 	task := &MiseUse{
 		Runner: mock,
@@ -177,32 +190,24 @@ func TestMiseUse_SkipsWhenAllAtCorrectVersion(t *testing.T) {
 }
 
 func TestMiseUse_InstallsMissingTools(t *testing.T) {
-	mock := &cmdexec.MockRunner{
-		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
-			if name == "mise" {
-				if len(args) >= 2 && args[0] == "current" {
-					switch args[1] {
-					case "go":
-						return []byte("1.22.0\n"), nil
-					case "node":
-						return []byte("18.0.0\n"), nil
-					case "rust":
-						return nil, errors.New("not installed")
-					}
-				}
-				if len(args) >= 3 && args[0] == "use" && args[1] == "--global" {
-					return []byte("installed " + args[2] + "\n"), nil
+	mock := newMiseAvailableRunner(func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name == "mise" {
+			if len(args) >= 2 && args[0] == "current" {
+				switch args[1] {
+				case "go":
+					return []byte("1.22.0\n"), nil
+				case "node":
+					return []byte("18.0.0\n"), nil
+				case "rust":
+					return nil, errors.New("not installed")
 				}
 			}
-			return nil, errors.New("unexpected command")
-		},
-		LookPathFunc: func(name string) (string, error) {
-			if name == "mise" {
-				return "/usr/bin/mise", nil
+			if len(args) >= 3 && args[0] == "use" && args[1] == "--global" {
+				return []byte("installed " + args[2] + "\n"), nil
 			}
-			return "", errors.New("not found")
-		},
-	}
+		}
+		return nil, errors.New("unexpected command")
+	})
 
 	task := &MiseUse{
 		Runner: mock,
@@ -222,11 +227,7 @@ func TestMiseUse_InstallsMissingTools(t *testing.T) {
 }
 
 func TestMiseUse_FailsWhenMiseNotAvailable(t *testing.T) {
-	mock := &cmdexec.MockRunner{
-		LookPathFunc: func(name string) (string, error) {
-			return "", errors.New("not found")
-		},
-	}
+	mock := newMiseUnavailableRunner()
 
 	task := &MiseUse{
 		Runner: mock,
@@ -242,25 +243,17 @@ func TestMiseUse_FailsWhenMiseNotAvailable(t *testing.T) {
 }
 
 func TestMiseUse_FailsOnInstallError(t *testing.T) {
-	mock := &cmdexec.MockRunner{
-		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
-			if name == "mise" {
-				if len(args) >= 2 && args[0] == "current" {
-					return nil, errors.New("not installed")
-				}
-				if len(args) >= 3 && args[0] == "use" {
-					return []byte("error: network timeout"), errors.New("install failed")
-				}
+	mock := newMiseAvailableRunner(func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name == "mise" {
+			if len(args) >= 2 && args[0] == "current" {
+				return nil, errors.New("not installed")
 			}
-			return nil, errors.New("unexpected")
-		},
-		LookPathFunc: func(name string) (string, error) {
-			if name == "mise" {
-				return "/usr/bin/mise", nil
+			if len(args) >= 3 && args[0] == "use" {
+				return []byte("error: network timeout"), errors.New("install failed")
 			}
-			return "", errors.New("not found")
-		},
-	}
+		}
+		return nil, errors.New("unexpected")
+	})
 
 	task := &MiseUse{
 		Runner: mock,
@@ -276,25 +269,17 @@ func TestMiseUse_FailsOnInstallError(t *testing.T) {
 }
 
 func TestMiseUse_CapturesOutputOnSuccess(t *testing.T) {
-	mock := &cmdexec.MockRunner{
-		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
-			if name == "mise" {
-				if len(args) >= 2 && args[0] == "current" {
-					return nil, errors.New("not installed")
-				}
-				if len(args) >= 3 && args[0] == "use" {
-					return []byte("mise: installing go@1.22.0\nmise: activated go@1.22.0"), nil
-				}
+	mock := newMiseAvailableRunner(func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name == "mise" {
+			if len(args) >= 2 && args[0] == "current" {
+				return nil, errors.New("not installed")
 			}
-			return nil, nil
-		},
-		LookPathFunc: func(name string) (string, error) {
-			if name == "mise" {
-				return "/usr/bin/mise", nil
+			if len(args) >= 3 && args[0] == "use" {
+				return []byte("mise: installing go@1.22.0\nmise: activated go@1.22.0"), nil
 			}
-			return "", errors.New("not found")
-		},
-	}
+		}
+		return nil, nil
+	})
 
 	task := &MiseUse{
 		Runner: mock,
@@ -311,38 +296,30 @@ func TestMiseUse_Idempotency(t *testing.T) {
 	callCount := 0
 	currentVersions := map[string]string{}
 
-	mock := &cmdexec.MockRunner{
-		RunFunc: func(ctx context.Context, name string, args ...string) ([]byte, error) {
-			if name == "mise" {
-				if len(args) >= 2 && args[0] == "current" {
-					if v, ok := currentVersions[args[1]]; ok {
-						return []byte(v + "\n"), nil
-					}
-					return nil, errors.New("not installed")
+	mock := newMiseAvailableRunner(func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name == "mise" {
+			if len(args) >= 2 && args[0] == "current" {
+				if v, ok := currentVersions[args[1]]; ok {
+					return []byte(v + "\n"), nil
 				}
-				if len(args) >= 3 && args[0] == "use" {
-					callCount++
+				return nil, errors.New("not installed")
+			}
+			if len(args) >= 3 && args[0] == "use" {
+				callCount++
 
-					spec := args[2]
+				spec := args[2]
 
-					for i := 0; i < len(spec); i++ {
-						if spec[i] == '@' {
-							currentVersions[spec[:i]] = spec[i+1:]
-							break
-						}
+				for i := 0; i < len(spec); i++ {
+					if spec[i] == '@' {
+						currentVersions[spec[:i]] = spec[i+1:]
+						break
 					}
-					return []byte("installed"), nil
 				}
+				return []byte("installed"), nil
 			}
-			return nil, nil
-		},
-		LookPathFunc: func(name string) (string, error) {
-			if name == "mise" {
-				return "/usr/bin/mise", nil
-			}
-			return "", errors.New("not found")
-		},
-	}
+		}
+		return nil, nil
+	})
 
 	task := &MiseUse{
 		Runner: mock,
@@ -362,14 +339,7 @@ func TestMiseUse_Idempotency(t *testing.T) {
 }
 
 func TestMiseUse_EmptyToolList(t *testing.T) {
-	mock := &cmdexec.MockRunner{
-		LookPathFunc: func(name string) (string, error) {
-			if name == "mise" {
-				return "/usr/bin/mise", nil
-			}
-			return "", errors.New("not found")
-		},
-	}
+	mock := newMiseAvailableRunner(nil)
 
 	task := &MiseUse{
 		Runner: mock,

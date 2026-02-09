@@ -436,63 +436,66 @@ func TestBuilder_Build_ArgResolutionContracts_TableDriven(t *testing.T) {
 	}
 }
 
-func TestBuilder_AnyNeedsSudo_WhenTrueEvaluatesDeferredTask(t *testing.T) {
-	exprCtx := expr.NewContext().WithProfile("work")
-	exprCtx.OS = "arch"
-
-	factoryCalls := 0
-	builder := NewBuilder().
-		WithExprContext(exprCtx).
-		Register("capture", func(args any) ([]Task, error) {
-			factoryCalls++
-			return []Task{&mockTask{name: "privileged", needsSudo: true, result: Result{Status: StatusDone}}}, nil
-		})
-
-	tasks, err := builder.Build([]config.Task{{
-		Action: "capture",
-		When:   func() *config.WhenExpr { w := config.WhenExpr(`${ os == "arch" }`); return &w }(),
-		Args:   nil,
-	}})
-	require.NoError(t, err)
-	require.Len(t, tasks, 1)
-	assert.Equal(t, 0, factoryCalls, "deferred factory should not run during build")
-
-	assert.True(t, AnyNeedsSudo(tasks), "preflight should detect sudo for true conditional deferred task")
-	assert.Equal(t, 1, factoryCalls, "deferred factory should initialize once during preflight")
-
-	result := tasks[0].Run(context.Background())
-	assert.Equal(t, StatusDone, result.Status)
-	assert.Equal(t, 1, factoryCalls, "deferred factory should not reinitialize during run")
-}
-
-func TestBuilder_AnyNeedsSudo_WhenFalseSkipsDeferredInitialization(t *testing.T) {
-	exprCtx := expr.NewContext().WithProfile("work")
-	exprCtx.OS = "darwin"
-
-	factoryCalls := 0
-	builder := NewBuilder().
-		WithExprContext(exprCtx).
-		Register("capture", func(args any) ([]Task, error) {
-			factoryCalls++
-			return []Task{&mockTask{name: "privileged", needsSudo: true, result: Result{Status: StatusDone}}}, nil
-		})
-
-	tasks, err := builder.Build([]config.Task{{
-		Action: "capture",
-		When:   func() *config.WhenExpr { w := config.WhenExpr(`${ os == "arch" }`); return &w }(),
-		Args: map[string]any{
-			"bad": "${ 1 + }",
+func TestBuilder_AnyNeedsSudo_ConditionalDeferredTask(t *testing.T) {
+	tests := []struct {
+		name                      string
+		os                        string
+		args                      any
+		wantAnyNeedsSudo          bool
+		wantFactoryAfterPreflight int
+		wantRunStatus             Status
+		wantFactoryAfterRun       int
+	}{
+		{
+			name:                      "true when evaluates deferred task",
+			os:                        "arch",
+			args:                      nil,
+			wantAnyNeedsSudo:          true,
+			wantFactoryAfterPreflight: 1,
+			wantRunStatus:             StatusDone,
+			wantFactoryAfterRun:       1,
 		},
-	}})
-	require.NoError(t, err)
-	require.Len(t, tasks, 1)
+		{
+			name:                      "false when skips deferred initialization",
+			os:                        "darwin",
+			args:                      map[string]any{"bad": "${ 1 + }"},
+			wantAnyNeedsSudo:          false,
+			wantFactoryAfterPreflight: 0,
+			wantRunStatus:             StatusSkipped,
+			wantFactoryAfterRun:       0,
+		},
+	}
 
-	assert.False(t, AnyNeedsSudo(tasks), "false when should short-circuit sudo preflight")
-	assert.Equal(t, 0, factoryCalls, "factory must not run when condition is false")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			exprCtx := expr.NewContext().WithProfile("work")
+			exprCtx.OS = tt.os
 
-	result := tasks[0].Run(context.Background())
-	assert.Equal(t, StatusSkipped, result.Status)
-	assert.Equal(t, 0, factoryCalls, "factory must remain uncalled after skipped run")
+			factoryCalls := 0
+			builder := NewBuilder().
+				WithExprContext(exprCtx).
+				Register("capture", func(args any) ([]Task, error) {
+					factoryCalls++
+					return []Task{&mockTask{name: "privileged", needsSudo: true, result: Result{Status: StatusDone}}}, nil
+				})
+
+			tasks, err := builder.Build([]config.Task{{
+				Action: "capture",
+				When:   func() *config.WhenExpr { w := config.WhenExpr(`${ os == "arch" }`); return &w }(),
+				Args:   tt.args,
+			}})
+			require.NoError(t, err)
+			require.Len(t, tasks, 1)
+			assert.Equal(t, 0, factoryCalls, "deferred factory should not run during build")
+
+			assert.Equal(t, tt.wantAnyNeedsSudo, AnyNeedsSudo(tasks))
+			assert.Equal(t, tt.wantFactoryAfterPreflight, factoryCalls)
+
+			result := tasks[0].Run(context.Background())
+			assert.Equal(t, tt.wantRunStatus, result.Status)
+			assert.Equal(t, tt.wantFactoryAfterRun, factoryCalls)
+		})
+	}
 }
 
 func TestConditionalTask_NeedsSudo_ConditionErrorIsConservative(t *testing.T) {

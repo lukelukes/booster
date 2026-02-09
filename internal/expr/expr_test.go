@@ -7,6 +7,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func mustResolveValue(t *testing.T, ctx *Context, raw any) any {
+	t.Helper()
+	v, err := NewValue(raw)
+	require.NoError(t, err)
+
+	got, err := v.Resolve(ctx)
+	require.NoError(t, err)
+
+	return got
+}
+
 func TestValue_Literal(t *testing.T) {
 	tests := []struct {
 		name string
@@ -191,11 +202,7 @@ func TestValue_BuiltinContainsOperator(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			v, err := NewValue(tt.raw)
-			require.NoError(t, err)
-
-			got, err := v.Resolve(ctx)
-			require.NoError(t, err)
+			got := mustResolveValue(t, ctx, tt.raw)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -216,11 +223,7 @@ func TestValue_InOperator(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			v, err := NewValue(tt.raw)
-			require.NoError(t, err)
-
-			got, err := v.Resolve(ctx)
-			require.NoError(t, err)
+			got := mustResolveValue(t, ctx, tt.raw)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -329,11 +332,7 @@ func TestValue_ExistsFunction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			v, err := NewValue(tt.raw)
-			require.NoError(t, err)
-
-			got, err := v.Resolve(ctx)
-			require.NoError(t, err)
+			got := mustResolveValue(t, ctx, tt.raw)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -371,11 +370,7 @@ func TestValue_NestedBraces(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			v, err := NewValue(tt.raw)
-			require.NoError(t, err)
-
-			got, err := v.Resolve(ctx)
-			require.NoError(t, err)
+			got := mustResolveValue(t, ctx, tt.raw)
 			assert.Equal(t, tt.want, got)
 		})
 	}

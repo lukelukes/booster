@@ -478,25 +478,31 @@ func TestPacmanManager_Install_EmptyList(t *testing.T) {
 	assert.Empty(t, mock.Calls, "should not call paru for empty list")
 }
 
-func TestNewPkgInstallFactory_SimpleFormat(t *testing.T) {
-	args := []any{"git", "curl", "ripgrep"}
-	manager := newMockManager("paru", false)
+func assertPkgInstallFactoryName(t *testing.T, args any, cfg PkgInstallConfig, contains, notContains []string) {
+	t.Helper()
 
-	factory := NewPkgInstallFactory(PkgInstallConfig{
-		Manager: manager,
-		OS:      "arch",
-	})
-
+	factory := NewPkgInstallFactory(cfg)
 	tasks, err := factory(args)
-
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 
 	name := tasks[0].Name()
-	assert.Contains(t, name, "git")
-	assert.Contains(t, name, "curl")
-	assert.Contains(t, name, "ripgrep")
-	assert.NotContains(t, name, "casks")
+	for _, want := range contains {
+		assert.Contains(t, name, want)
+	}
+	for _, avoid := range notContains {
+		assert.NotContains(t, name, avoid)
+	}
+}
+
+func TestNewPkgInstallFactory_SimpleFormat(t *testing.T) {
+	args := []any{"git", "curl", "ripgrep"}
+	manager := newMockManager("paru", false)
+
+	assertPkgInstallFactoryName(t, args, PkgInstallConfig{
+		Manager: manager,
+		OS:      "arch",
+	}, []string{"git", "curl", "ripgrep"}, []string{"casks"})
 }
 
 func TestNewPkgInstallFactory_StructuredFormat(t *testing.T) {
@@ -510,22 +516,10 @@ func TestNewPkgInstallFactory_StructuredFormat(t *testing.T) {
 	}
 	manager := newMockManager("homebrew", true)
 
-	factory := NewPkgInstallFactory(PkgInstallConfig{
+	assertPkgInstallFactoryName(t, args, PkgInstallConfig{
 		Manager: manager,
 		OS:      "darwin",
-	})
-
-	tasks, err := factory(args)
-
-	require.NoError(t, err)
-	require.Len(t, tasks, 1)
-
-	name := tasks[0].Name()
-	assert.Contains(t, name, "git")
-	assert.Contains(t, name, "curl")
-	assert.Contains(t, name, "casks")
-	assert.Contains(t, name, "firefox")
-	assert.Contains(t, name, "vscode")
+	}, []string{"git", "curl", "casks", "firefox", "vscode"}, nil)
 }
 
 func TestNewPkgInstallFactory_MixedFormat(t *testing.T) {
@@ -537,20 +531,10 @@ func TestNewPkgInstallFactory_MixedFormat(t *testing.T) {
 	}
 	manager := newMockManager("homebrew", true)
 
-	factory := NewPkgInstallFactory(PkgInstallConfig{
+	assertPkgInstallFactoryName(t, args, PkgInstallConfig{
 		Manager: manager,
 		OS:      "darwin",
-	})
-
-	tasks, err := factory(args)
-
-	require.NoError(t, err)
-	require.Len(t, tasks, 1)
-
-	name := tasks[0].Name()
-	assert.Contains(t, name, "git")
-	assert.Contains(t, name, "casks")
-	assert.Contains(t, name, "firefox")
+	}, []string{"git", "casks", "firefox"}, nil)
 }
 
 func TestNewPkgInstallFactory_EmptyList(t *testing.T) {

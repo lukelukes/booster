@@ -20,6 +20,22 @@ func loadConfigFromContent(t *testing.T, content string) (*Config, error) {
 	return Load(configPath)
 }
 
+func assertConfigLoadCase(t *testing.T, content, wantErr string, check func(*testing.T, *Config)) {
+	t.Helper()
+
+	cfg, err := loadConfigFromContent(t, content)
+	if wantErr != "" {
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), wantErr)
+		return
+	}
+
+	require.NoError(t, err)
+	if check != nil {
+		check(t, cfg)
+	}
+}
+
 func TestLoad(t *testing.T) {
 	tests := []struct {
 		checkValid func(*testing.T, *Config)
@@ -116,18 +132,7 @@ tasks:
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := loadConfigFromContent(t, tt.content)
-
-			if tt.wantErr != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.wantErr)
-				return
-			}
-
-			require.NoError(t, err)
-			if tt.checkValid != nil {
-				tt.checkValid(t, cfg)
-			}
+			assertConfigLoadCase(t, tt.content, tt.wantErr, tt.checkValid)
 		})
 	}
 }
@@ -245,15 +250,7 @@ tasks:
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := loadConfigFromContent(t, tt.content)
-			if tt.wantErr != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.wantErr)
-				return
-			}
-
-			require.NoError(t, err)
-			tt.check(t, cfg)
+			assertConfigLoadCase(t, tt.content, tt.wantErr, tt.check)
 		})
 	}
 }
@@ -389,14 +386,7 @@ tasks:
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := loadConfigFromContent(t, tt.content)
-			if tt.wantErr != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.wantErr)
-				return
-			}
-			require.NoError(t, err)
-			tt.check(t, cfg)
+			assertConfigLoadCase(t, tt.content, tt.wantErr, tt.check)
 		})
 	}
 }

@@ -9,6 +9,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func extractStatLineMiddle(s string) string {
+	start := strings.Index(s, " ")
+	if start == -1 {
+		return ""
+	}
+
+	pctIdx := strings.Index(s, "%")
+	if pctIdx == -1 {
+		return ""
+	}
+
+	i := pctIdx - 1
+	for i >= 0 && (s[i] >= '0' && s[i] <= '9' || s[i] == ' ') {
+		i--
+	}
+
+	return s[start : i+1]
+}
+
 func TestRenderSummary_SuccessState(t *testing.T) {
 	data := SummaryData{
 		Done:    12,
@@ -350,27 +369,9 @@ func TestRenderStatLine_Alignment(t *testing.T) {
 	assert.Contains(t, skippedLine, "skipped", "Should contain skipped label")
 	assert.Contains(t, failedLine, "failed", "Should contain failed label")
 
-	extractMiddle := func(s string) string {
-		start := strings.Index(s, " ")
-		if start == -1 {
-			return ""
-		}
-
-		pctIdx := strings.Index(s, "%")
-		if pctIdx == -1 {
-			return ""
-		}
-
-		i := pctIdx - 1
-		for i >= 0 && (s[i] >= '0' && s[i] <= '9' || s[i] == ' ') {
-			i--
-		}
-		return s[start : i+1]
-	}
-
-	completedMiddle := extractMiddle(completedLine)
-	skippedMiddle := extractMiddle(skippedLine)
-	failedMiddle := extractMiddle(failedLine)
+	completedMiddle := extractStatLineMiddle(completedLine)
+	skippedMiddle := extractStatLineMiddle(skippedLine)
+	failedMiddle := extractStatLineMiddle(failedLine)
 
 	require.NotEmpty(t, completedMiddle, "Should extract middle section from completed line")
 	require.NotEmpty(t, skippedMiddle, "Should extract middle section from skipped line")
@@ -399,29 +400,12 @@ func TestRenderStatistics_Alignment(t *testing.T) {
 	result := renderStatistics(data)
 	lines := strings.Split(result, "\n")
 
-	extractMiddle := func(s string) string {
-		start := strings.Index(s, " ")
-		if start == -1 {
-			return ""
-		}
-		pctIdx := strings.Index(s, "%")
-		if pctIdx == -1 {
-			return ""
-		}
-
-		i := pctIdx - 1
-		for i >= 0 && (s[i] >= '0' && s[i] <= '9' || s[i] == ' ') {
-			i--
-		}
-		return s[start : i+1]
-	}
-
 	var middleSections []string
 	for _, line := range lines {
 		if strings.Contains(line, "Summary") || strings.Contains(line, "─") {
 			continue
 		}
-		middle := extractMiddle(line)
+		middle := extractStatLineMiddle(line)
 		if middle != "" {
 			middleSections = append(middleSections, middle)
 		}

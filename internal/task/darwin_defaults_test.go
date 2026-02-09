@@ -12,15 +12,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func newDarwinDefaultsTask(runner *cmdexec.MockRunner, osName string, entries ...DefaultsEntry) *DarwinDefaults {
+	return &DarwinDefaults{
+		Runner:  runner,
+		OS:      osName,
+		Entries: entries,
+	}
+}
+
+func runDarwinDefaultsFactoryWithContent(t *testing.T, content string) error {
+	t.Helper()
+
+	dir := t.TempDir()
+	defaultsFile := filepath.Join(dir, "defaults.yaml")
+	require.NoError(t, os.WriteFile(defaultsFile, []byte(content), 0o644))
+
+	factory := NewDarwinDefaultsFactory(DarwinDefaultsConfig{
+		Runner:    &cmdexec.MockRunner{},
+		OS:        "darwin",
+		ConfigDir: dir,
+	})
+
+	_, err := factory(map[string]any{"file": "defaults.yaml"})
+	return err
+}
+
 func TestDarwinDefaults_SkipOnNonDarwin(t *testing.T) {
 	runner := &cmdexec.MockRunner{}
-	task := &DarwinDefaults{
-		Runner: runner,
-		OS:     "linux",
-		Entries: []DefaultsEntry{
-			{Domain: "com.apple.finder", Key: "AppleShowAllFiles", Type: "bool", Value: true},
-		},
-	}
+	task := newDarwinDefaultsTask(runner, "linux",
+		DefaultsEntry{Domain: "com.apple.finder", Key: "AppleShowAllFiles", Type: "bool", Value: true},
+	)
 
 	result := task.Run(context.Background())
 
@@ -40,13 +61,9 @@ func TestDarwinDefaults_SkipWhenValueMatches_Bool(t *testing.T) {
 		},
 	}
 
-	task := &DarwinDefaults{
-		Runner: runner,
-		OS:     "darwin",
-		Entries: []DefaultsEntry{
-			{Domain: "com.apple.finder", Key: "AppleShowAllFiles", Type: "bool", Value: true},
-		},
-	}
+	task := newDarwinDefaultsTask(runner, "darwin",
+		DefaultsEntry{Domain: "com.apple.finder", Key: "AppleShowAllFiles", Type: "bool", Value: true},
+	)
 
 	result := task.Run(context.Background())
 
@@ -68,13 +85,9 @@ func TestDarwinDefaults_WriteWhenValueDiffers_Bool(t *testing.T) {
 		},
 	}
 
-	task := &DarwinDefaults{
-		Runner: runner,
-		OS:     "darwin",
-		Entries: []DefaultsEntry{
-			{Domain: "com.apple.finder", Key: "AppleShowAllFiles", Type: "bool", Value: true},
-		},
-	}
+	task := newDarwinDefaultsTask(runner, "darwin",
+		DefaultsEntry{Domain: "com.apple.finder", Key: "AppleShowAllFiles", Type: "bool", Value: true},
+	)
 
 	result := task.Run(context.Background())
 
@@ -98,13 +111,9 @@ func TestDarwinDefaults_WriteWhenKeyNotSet(t *testing.T) {
 		},
 	}
 
-	task := &DarwinDefaults{
-		Runner: runner,
-		OS:     "darwin",
-		Entries: []DefaultsEntry{
-			{Domain: "com.apple.finder", Key: "NewKey", Type: "bool", Value: true},
-		},
-	}
+	task := newDarwinDefaultsTask(runner, "darwin",
+		DefaultsEntry{Domain: "com.apple.finder", Key: "NewKey", Type: "bool", Value: true},
+	)
 
 	result := task.Run(context.Background())
 
@@ -220,13 +229,9 @@ func TestDarwinDefaults_BooleanNormalization(t *testing.T) {
 				},
 			}
 
-			task := &DarwinDefaults{
-				Runner: runner,
-				OS:     "darwin",
-				Entries: []DefaultsEntry{
-					{Domain: "test", Key: "key", Type: "bool", Value: tt.yamlValue},
-				},
-			}
+			task := newDarwinDefaultsTask(runner, "darwin",
+				DefaultsEntry{Domain: "test", Key: "key", Type: "bool", Value: tt.yamlValue},
+			)
 
 			result := task.Run(context.Background())
 
@@ -257,15 +262,11 @@ func TestDarwinDefaults_MultipleEntries(t *testing.T) {
 		},
 	}
 
-	task := &DarwinDefaults{
-		Runner: runner,
-		OS:     "darwin",
-		Entries: []DefaultsEntry{
-			{Domain: "test", Key: "key1", Type: "bool", Value: true},
-			{Domain: "test", Key: "key2", Type: "int", Value: 42},
-			{Domain: "test", Key: "key3", Type: "bool", Value: true},
-		},
-	}
+	task := newDarwinDefaultsTask(runner, "darwin",
+		DefaultsEntry{Domain: "test", Key: "key1", Type: "bool", Value: true},
+		DefaultsEntry{Domain: "test", Key: "key2", Type: "int", Value: 42},
+		DefaultsEntry{Domain: "test", Key: "key3", Type: "bool", Value: true},
+	)
 
 	result := task.Run(context.Background())
 
@@ -289,13 +290,9 @@ func TestDarwinDefaults_WriteError(t *testing.T) {
 		},
 	}
 
-	task := &DarwinDefaults{
-		Runner: runner,
-		OS:     "darwin",
-		Entries: []DefaultsEntry{
-			{Domain: "test", Key: "key", Type: "bool", Value: true},
-		},
-	}
+	task := newDarwinDefaultsTask(runner, "darwin",
+		DefaultsEntry{Domain: "test", Key: "key", Type: "bool", Value: true},
+	)
 
 	result := task.Run(context.Background())
 
@@ -519,22 +516,7 @@ func TestNewDarwinDefaultsFactory_MissingRequiredFields(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			defaultsFile := filepath.Join(dir, "defaults.yaml")
-			require.NoError(t, os.WriteFile(defaultsFile, []byte(tt.content), 0o644))
-
-			factory := NewDarwinDefaultsFactory(DarwinDefaultsConfig{
-				Runner:    &cmdexec.MockRunner{},
-				OS:        "darwin",
-				ConfigDir: dir,
-			})
-
-			args := map[string]any{
-				"file": "defaults.yaml",
-			}
-
-			_, err := factory(args)
-
+			err := runDarwinDefaultsFactoryWithContent(t, tt.content)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.errMsg)
 		})
@@ -591,22 +573,7 @@ func TestNewDarwinDefaultsFactory_ValidationErrorIndex(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			defaultsFile := filepath.Join(dir, "defaults.yaml")
-			require.NoError(t, os.WriteFile(defaultsFile, []byte(tt.content), 0o644))
-
-			factory := NewDarwinDefaultsFactory(DarwinDefaultsConfig{
-				Runner:    &cmdexec.MockRunner{},
-				OS:        "darwin",
-				ConfigDir: dir,
-			})
-
-			args := map[string]any{
-				"file": "defaults.yaml",
-			}
-
-			_, err := factory(args)
-
+			err := runDarwinDefaultsFactoryWithContent(t, tt.content)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.expectedIndex,
 				"error message must show correct 1-indexed entry number")
@@ -708,13 +675,9 @@ func TestDarwinDefaults_MessageWhenNoAlreadySet(t *testing.T) {
 		},
 	}
 
-	task := &DarwinDefaults{
-		Runner: runner,
-		OS:     "darwin",
-		Entries: []DefaultsEntry{
-			{Domain: "test", Key: "key1", Type: "bool", Value: true},
-		},
-	}
+	task := newDarwinDefaultsTask(runner, "darwin",
+		DefaultsEntry{Domain: "test", Key: "key1", Type: "bool", Value: true},
+	)
 
 	result := task.Run(context.Background())
 
@@ -737,13 +700,9 @@ func TestDarwinDefaults_CapturesWriteOutput(t *testing.T) {
 		},
 	}
 
-	task := &DarwinDefaults{
-		Runner: runner,
-		OS:     "darwin",
-		Entries: []DefaultsEntry{
-			{Domain: "test", Key: "key", Type: "bool", Value: true},
-		},
-	}
+	task := newDarwinDefaultsTask(runner, "darwin",
+		DefaultsEntry{Domain: "test", Key: "key", Type: "bool", Value: true},
+	)
 
 	result := task.Run(context.Background())
 

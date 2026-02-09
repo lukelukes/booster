@@ -18,8 +18,27 @@ type GitConfigItem struct {
 	Prompt string
 }
 
+type GitConfigStore interface {
+	GetGlobal(ctx context.Context, key string) (string, error)
+	SetGlobal(ctx context.Context, key, value string) (string, error)
+}
+
+type GitCLIStore struct {
+	Runner cmdexec.Runner
+}
+
+func (s *GitCLIStore) GetGlobal(ctx context.Context, key string) (string, error) {
+	output, err := s.Runner.Run(ctx, "git", "config", "--global", "--get", key)
+	return strings.TrimSpace(string(output)), err
+}
+
+func (s *GitCLIStore) SetGlobal(ctx context.Context, key, value string) (string, error) {
+	output, err := s.Runner.Run(ctx, "git", "config", "--global", key, value)
+	return string(output), err
+}
+
 type GitConfig struct {
-	Runner   cmdexec.Runner
+	Store    GitConfigStore
 	Prompter Prompter
 	Items    []GitConfigItem
 }
@@ -51,9 +70,12 @@ func (t *GitConfig) Run(ctx context.Context) Result {
 	var skipped []string
 	var allOutput strings.Builder
 
+	if t.Store == nil {
+		return Result{Status: StatusFailed, Error: errors.New("git config store is required")}
+	}
+
 	for _, item := range t.Items {
-		output, err := t.Runner.Run(ctx, "git", "config", "--global", "--get", item.Key)
-		existing := strings.TrimSpace(string(output))
+		existing, err := t.Store.GetGlobal(ctx, item.Key)
 
 		if item.Value != "" {
 			if existing == item.Value {
@@ -61,12 +83,12 @@ func (t *GitConfig) Run(ctx context.Context) Result {
 				continue
 			}
 
-			setOutput, setErr := t.Runner.Run(ctx, "git", "config", "--global", item.Key, item.Value)
+			setOutput, setErr := t.Store.SetGlobal(ctx, item.Key, item.Value)
 			if setErr != nil {
 				if allOutput.Len() > 0 {
 					allOutput.WriteString("\n")
 				}
-				allOutput.Write(setOutput)
+				allOutput.WriteString(setOutput)
 				return Result{
 					Status: StatusFailed,
 					Error:  fmt.Errorf("set %s: %w", item.Key, setErr),
@@ -98,12 +120,12 @@ func (t *GitConfig) Run(ctx context.Context) Result {
 				}
 			}
 
-			setOutput, setErr := t.Runner.Run(ctx, "git", "config", "--global", item.Key, value)
+			setOutput, setErr := t.Store.SetGlobal(ctx, item.Key, value)
 			if setErr != nil {
 				if allOutput.Len() > 0 {
 					allOutput.WriteString("\n")
 				}
-				allOutput.Write(setOutput)
+				allOutput.WriteString(setOutput)
 				return Result{
 					Status: StatusFailed,
 					Error:  fmt.Errorf("set %s: %w", item.Key, setErr),
@@ -148,7 +170,7 @@ func NewGitConfig(runner cmdexec.Runner, prompter Prompter) Factory {
 		}
 
 		return []Task{&GitConfig{
-			Runner:   runner,
+			Store:    &GitCLIStore{Runner: runner},
 			Prompter: prompter,
 			Items:    items,
 		}}, nil

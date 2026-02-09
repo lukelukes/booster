@@ -35,6 +35,14 @@ func setupTestConfigWithCmd(t *testing.T, content string, cmd RunCmd) (*CLI, *Ru
 	return cli, &cmdCopy
 }
 
+func assertRunCmdFromContent(t *testing.T, content string) {
+	t.Helper()
+
+	cli, cmd := setupTestConfig(t, content)
+	err := cmd.Run(cli)
+	require.NoError(t, err)
+}
+
 func TestRunCmd_CoreScenarios(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -184,11 +192,7 @@ tasks:
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cli, cmd := setupTestConfig(t, tt.content)
-
-			err := cmd.Run(cli)
-
-			require.NoError(t, err)
+			assertRunCmdFromContent(t, tt.content)
 		})
 	}
 }
@@ -278,11 +282,7 @@ tasks:
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cli, cmd := setupTestConfig(t, tt.content)
-
-			err := cmd.Run(cli)
-
-			require.NoError(t, err)
+			assertRunCmdFromContent(t, tt.content)
 		})
 	}
 }
@@ -325,9 +325,7 @@ tasks:
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cli, cmd := setupTestConfig(t, tt.content)
-			err := cmd.Run(cli)
-			require.NoError(t, err)
+			assertRunCmdFromContent(t, tt.content)
 		})
 	}
 }

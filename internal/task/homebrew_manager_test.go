@@ -78,9 +78,9 @@ func TestHomebrewManager_Name(t *testing.T) {
 	assert.Equal(t, "homebrew", manager.Name())
 }
 
-func TestHomebrewManager_SupportsCasks(t *testing.T) {
+func TestHomebrewManager_ImplementsCaskInstaller(t *testing.T) {
 	manager := NewHomebrewManager(nil, nil)
-	assert.True(t, manager.SupportsCasks())
+	assert.Implements(t, (*CaskInstaller)(nil), manager)
 }
 
 func TestHomebrewManager_ListInstalled(t *testing.T) {

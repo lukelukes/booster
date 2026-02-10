@@ -119,7 +119,7 @@ func (c *RunCmd) Run(cli *CLI) error {
 	}
 
 	model := tui.New(tasks, logPath)
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)

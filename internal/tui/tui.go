@@ -55,10 +55,11 @@ type Model struct {
 	logWriter    *logstream.ChannelWriter
 	focusedPanel FocusPanel
 
+	logPath  string
 	debugFile *os.File
 }
 
-func New(tasks []task.Task) Model {
+func New(tasks []task.Task, logPath string) Model {
 	exec := executor.New(tasks)
 	tl := NewTaskList(exec)
 	tl.SetCompactMode(true)
@@ -71,6 +72,7 @@ func New(tasks []task.Task) Model {
 		focusedPanel:    FocusTaskList,
 		taskList:        tl,
 		selectedTaskIdx: 0,
+		logPath:         logPath,
 	}
 
 	if debugPath := os.Getenv("BOOSTER_DEBUG"); debugPath != "" {
@@ -368,6 +370,10 @@ func (m Model) renderSingleColumn() string {
 
 	s.WriteString(titleStyle.Render("BOOSTER"))
 	s.WriteString("\n")
+	if m.logPath != "" {
+		s.WriteString(logHeaderStyle.Render("  logs → tail -f " + m.logPath))
+		s.WriteString("\n")
+	}
 
 	barWidth := m.width - 4
 	if barWidth < 20 {
@@ -572,6 +578,11 @@ func (m Model) renderTwoColumn(layout Layout) string {
 
 func (m Model) renderTaskListContent(width int) string {
 	var s strings.Builder
+
+	if m.logPath != "" {
+		s.WriteString(logHeaderStyle.Render("  logs → tail -f " + m.logPath))
+		s.WriteString("\n")
+	}
 
 	tasks := m.exec.Tasks()
 	total := m.exec.Total()

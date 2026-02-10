@@ -17,7 +17,7 @@ func TestTeatest_JKNavigationTaskList(t *testing.T) {
 		newMockTask("task3", task.StatusDone, "", nil),
 	}
 
-	tm := teatest.NewTestModel(t, New(tasks),
+	tm := teatest.NewTestModel(t, New(tasks, ""),
 		teatest.WithInitialTermSize(100, 40),
 	)
 	t.Cleanup(func() { tm.Quit() })
@@ -48,7 +48,7 @@ func TestTeatest_ArrowKeyNavigation(t *testing.T) {
 		newMockTask("task2", task.StatusDone, "", nil),
 	}
 
-	tm := teatest.NewTestModel(t, New(tasks),
+	tm := teatest.NewTestModel(t, New(tasks, ""),
 		teatest.WithInitialTermSize(100, 40),
 	)
 	t.Cleanup(func() { tm.Quit() })
@@ -83,7 +83,7 @@ func TestTeatest_TabSwitchesFocus(t *testing.T) {
 		newMockTask("task2", task.StatusDone, "", nil),
 	}
 
-	tm := teatest.NewTestModel(t, New(tasks),
+	tm := teatest.NewTestModel(t, New(tasks, ""),
 		teatest.WithInitialTermSize(100, 40),
 	)
 	t.Cleanup(func() { tm.Quit() })
@@ -115,7 +115,7 @@ func TestTeatest_ToggleLogsPanel(t *testing.T) {
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
 
-	tm := teatest.NewTestModel(t, New(tasks),
+	tm := teatest.NewTestModel(t, New(tasks, ""),
 		teatest.WithInitialTermSize(100, 40),
 	)
 	t.Cleanup(func() { tm.Quit() })
@@ -151,7 +151,7 @@ func TestTeatest_QuitWithQ(t *testing.T) {
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
 
-	tm := teatest.NewTestModel(t, New(tasks),
+	tm := teatest.NewTestModel(t, New(tasks, ""),
 		teatest.WithInitialTermSize(100, 40),
 	)
 
@@ -175,7 +175,7 @@ func TestTeatest_NavigationBoundsAtEdges(t *testing.T) {
 		newMockTask("last_task", task.StatusDone, "", nil),
 	}
 
-	tm := teatest.NewTestModel(t, New(tasks),
+	tm := teatest.NewTestModel(t, New(tasks, ""),
 		teatest.WithInitialTermSize(100, 40),
 	)
 	t.Cleanup(func() { tm.Quit() })
@@ -207,7 +207,7 @@ func TestTeatest_AutoAdvancement(t *testing.T) {
 		newMockTask("task3", task.StatusDone, "", nil),
 	}
 
-	tm := teatest.NewTestModel(t, New(tasks), teatest.WithInitialTermSize(100, 40))
+	tm := teatest.NewTestModel(t, New(tasks, ""), teatest.WithInitialTermSize(100, 40))
 	t.Cleanup(func() { tm.Quit() })
 
 	teatest.WaitFor(t, tm.Output(), func(bts []byte) bool {

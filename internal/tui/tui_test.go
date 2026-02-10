@@ -71,7 +71,7 @@ func TestNew(t *testing.T) {
 		newMockTask("task2", task.StatusDone, "", nil),
 	}
 
-	model := New(tasks)
+	model := New(tasks, "")
 
 	assert.NotNil(t, model.exec, "executor should be initialized")
 	assert.False(t, model.showOutput, "showOutput should default to false")
@@ -82,7 +82,7 @@ func TestInit_WithTasks(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	cmd := model.Init()
 
@@ -90,7 +90,7 @@ func TestInit_WithTasks(t *testing.T) {
 }
 
 func TestInit_EmptyTasks(t *testing.T) {
-	model := New([]task.Task{})
+	model := New([]task.Task{}, "")
 
 	cmd := model.Init()
 
@@ -110,7 +110,7 @@ func TestUpdate_KeyHandling(t *testing.T) {
 			name: "q quits",
 			setupModel: func() Model {
 				tasks := []task.Task{newMockTask("task1", task.StatusDone, "", nil)}
-				return New(tasks)
+				return New(tasks, "")
 			},
 			keyMsg:      tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")},
 			wantQuitCmd: true,
@@ -119,7 +119,7 @@ func TestUpdate_KeyHandling(t *testing.T) {
 			name: "Ctrl+C quits",
 			setupModel: func() Model {
 				tasks := []task.Task{newMockTask("task1", task.StatusDone, "", nil)}
-				return New(tasks)
+				return New(tasks, "")
 			},
 			keyMsg:      tea.KeyMsg{Type: tea.KeyCtrlC},
 			wantQuitCmd: true,
@@ -137,7 +137,7 @@ func TestUpdate_KeyHandling(t *testing.T) {
 			name: "Enter ignored when not done",
 			setupModel: func() Model {
 				tasks := []task.Task{newMockTask("task1", task.StatusDone, "", nil)}
-				return New(tasks)
+				return New(tasks, "")
 			},
 			keyMsg:      tea.KeyMsg{Type: tea.KeyEnter},
 			wantQuitCmd: false,
@@ -158,7 +158,7 @@ func TestUpdate_KeyHandling(t *testing.T) {
 			name: "o ignored when not done",
 			setupModel: func() Model {
 				tasks := []task.Task{newMockTask("task1", task.StatusDone, "", nil)}
-				return New(tasks)
+				return New(tasks, "")
 			},
 			keyMsg: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")},
 			wantShowOutput: func() *bool {
@@ -170,7 +170,7 @@ func TestUpdate_KeyHandling(t *testing.T) {
 			name: "unknown key ignored",
 			setupModel: func() Model {
 				tasks := []task.Task{newMockTask("task1", task.StatusDone, "", nil)}
-				return New(tasks)
+				return New(tasks, "")
 			},
 			keyMsg:      tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")},
 			wantQuitCmd: false,
@@ -223,7 +223,7 @@ func TestUpdate_TaskDoneMsg(t *testing.T) {
 		newMockTask("task1", task.StatusDone, "", nil),
 		newMockTask("task2", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	_, ok := model.exec.RunNext(context.Background())
 	require.True(t, ok, "First task should run")
@@ -259,7 +259,7 @@ func TestUpdate_TaskFailure_StopsExecution(t *testing.T) {
 		newMockTask("task2", task.StatusFailed, "", errors.New("fail")),
 		newMockTask("task3", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	result1, ok := model.exec.RunNext(context.Background())
 	require.True(t, ok, "Task1 should run")
@@ -288,7 +288,7 @@ func TestUpdate_UnknownMessageIgnored(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	type unknownMsg struct{}
 	newModel, cmd := model.Update(unknownMsg{})
@@ -301,7 +301,7 @@ func TestView_ContainsTitle(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	view := model.View()
 
@@ -325,7 +325,7 @@ func TestView_TaskStatus(t *testing.T) {
 					newMockTask("running task", task.StatusDone, "", nil),
 					newMockTask("pending task", task.StatusDone, "", nil),
 				}
-				return New(tasks)
+				return New(tasks, "")
 			},
 			executeCount:  1,
 			checkTaskName: "pending task",
@@ -341,7 +341,7 @@ func TestView_TaskStatus(t *testing.T) {
 					newMockTask("running task", task.StatusDone, "", nil),
 					newMockTask("pending task", task.StatusDone, "", nil),
 				}
-				return New(tasks)
+				return New(tasks, "")
 			},
 			executeCount:  0,
 			checkTaskName: "running task",
@@ -356,7 +356,7 @@ func TestView_TaskStatus(t *testing.T) {
 				tasks := []task.Task{
 					newMockTask("completed task", task.StatusDone, "", nil),
 				}
-				return New(tasks)
+				return New(tasks, "")
 			},
 			executeCount:  1,
 			checkTaskName: "completed task",
@@ -370,7 +370,7 @@ func TestView_TaskStatus(t *testing.T) {
 				tasks := []task.Task{
 					newMockTaskWithMessage("skipped task", task.StatusSkipped, "already exists"),
 				}
-				return New(tasks)
+				return New(tasks, "")
 			},
 			executeCount:  1,
 			checkTaskName: "skipped task",
@@ -385,7 +385,7 @@ func TestView_TaskStatus(t *testing.T) {
 				tasks := []task.Task{
 					newMockTaskWithMessage("conditional task", task.StatusSkipped, "condition not met: os=darwin, want arch"),
 				}
-				return New(tasks)
+				return New(tasks, "")
 			},
 			executeCount:  1,
 			checkTaskName: "conditional task",
@@ -401,7 +401,7 @@ func TestView_TaskStatus(t *testing.T) {
 				tasks := []task.Task{
 					newMockTask("failed task", task.StatusFailed, "", testErr),
 				}
-				return New(tasks)
+				return New(tasks, "")
 			},
 			executeCount:  1,
 			checkTaskName: "failed task",
@@ -416,7 +416,7 @@ func TestView_TaskStatus(t *testing.T) {
 				tasks := []task.Task{
 					newMockTask("failed task", task.StatusFailed, "", nil),
 				}
-				return New(tasks)
+				return New(tasks, "")
 			},
 			executeCount:  1,
 			checkTaskName: "failed task",
@@ -461,7 +461,7 @@ func runViewTests(t *testing.T, tests []viewTestCase) {
 	t.Helper()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			model := New(tt.tasks)
+			model := New(tt.tasks, "")
 
 			model.width = 50
 			model.height = 40
@@ -624,7 +624,7 @@ func TestHasTaskOutput(t *testing.T) {
 			newMockTask("task1", task.StatusDone, "", nil),
 			newMockTask("task2", task.StatusDone, "", nil),
 		}
-		model := New(tasks)
+		model := New(tasks, "")
 
 		_, _ = model.exec.RunNext(context.Background())
 		_, _ = model.exec.RunNext(context.Background())
@@ -638,7 +638,7 @@ func TestHasTaskOutput(t *testing.T) {
 			newMockTask("task1", task.StatusDone, "", nil),
 			newMockTask("task2", task.StatusDone, "some output", nil),
 		}
-		model := New(tasks)
+		model := New(tasks, "")
 
 		_, _ = model.exec.RunNext(context.Background())
 		_, _ = model.exec.RunNext(context.Background())
@@ -651,7 +651,7 @@ func TestHasTaskOutput(t *testing.T) {
 		tasks := []task.Task{
 			newMockTask("task1", task.StatusDone, "some output", nil),
 		}
-		model := New(tasks)
+		model := New(tasks, "")
 
 		hasOutput := model.hasTaskOutput()
 		assert.False(t, hasOutput, "Should return false when tasks haven't run yet")
@@ -662,7 +662,7 @@ func TestStartTask(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "output", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	logWriter, logCh, cmd := model.startTask()
 	require.NotNil(t, logWriter, "startTask should return a logWriter")
@@ -686,7 +686,7 @@ func TestIntegration_FullTaskFlow(t *testing.T) {
 		newMockTask("task2", task.StatusSkipped, "output2", nil),
 		newMockTask("task3", task.StatusFailed, "", errors.New("failure")),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	cmd := model.Init()
 	require.NotNil(t, cmd, "Init should return command")
@@ -730,7 +730,7 @@ func TestView_MultipleTasksWithDifferentStatuses(t *testing.T) {
 		newMockTask("pending task 1", task.StatusDone, "", nil),
 		newMockTask("pending task 2", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	_, _ = model.exec.RunNext(context.Background())
 	_, _ = model.exec.RunNext(context.Background())
@@ -795,7 +795,7 @@ func TestLogStreaming_Integration(t *testing.T) {
 		result: task.Result{Status: task.StatusDone},
 	}
 
-	model := New([]task.Task{streamTask})
+	model := New([]task.Task{streamTask}, "")
 
 	logWriter, logCh, cmd := model.startTask()
 	require.NotNil(t, logWriter, "logWriter should be returned")
@@ -825,7 +825,7 @@ func TestLogStreaming_IntegrationWithModelUpdate(t *testing.T) {
 		result: task.Result{Status: task.StatusDone},
 	}
 
-	model := New([]task.Task{streamTask})
+	model := New([]task.Task{streamTask}, "")
 
 	result, ok := model.exec.RunNext(context.Background())
 	require.True(t, ok, "Task should run")
@@ -864,7 +864,7 @@ func TestLogStreaming_IntegrationWithModelUpdate(t *testing.T) {
 }
 
 func TestLogStreaming_MaxLinesLimit(t *testing.T) {
-	model := New([]task.Task{newMockTask("task", task.StatusDone, "", nil)})
+	model := New([]task.Task{newMockTask("task", task.StatusDone, "", nil)}, "")
 
 	for i := range maxLogLines + 5 {
 		msg := logLineMsg{line: fmt.Sprintf("line %d", i)}
@@ -887,7 +887,7 @@ func TestLogHistory_Persistence(t *testing.T) {
 		newMockTask("task2", task.StatusDone, "", nil),
 		newMockTask("task3", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	_, ok := model.exec.RunNext(context.Background())
 	require.True(t, ok, "Task1 should run")
@@ -957,7 +957,7 @@ func TestLogHistory_FailedTask(t *testing.T) {
 		newMockTask("task1", task.StatusDone, "", nil),
 		newMockTask("task2", task.StatusFailed, "", errors.New("failure")),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	_, _ = model.exec.RunNext(context.Background())
 
@@ -996,7 +996,7 @@ func TestLogTaskCoordination_TaskDoneBeforeLogDone(t *testing.T) {
 		newMockTask("task1", task.StatusDone, "", nil),
 		newMockTask("task2", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	_, _ = model.exec.RunNext(context.Background())
 
@@ -1033,7 +1033,7 @@ func TestLogTaskCoordination_LogDoneBeforeTaskDone(t *testing.T) {
 		newMockTask("task1", task.StatusDone, "", nil),
 		newMockTask("task2", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	_, _ = model.exec.RunNext(context.Background())
 
@@ -1060,7 +1060,7 @@ func TestFocusMode_TabKeyTogglesFocus(t *testing.T) {
 		newMockTask("task1", task.StatusDone, "", nil),
 		newMockTask("task2", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	m, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	model = m.(Model)
@@ -1082,7 +1082,7 @@ func TestFocusMode_JKScrollsLogsWhenFocused(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	m, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	model = m.(Model)
@@ -1111,7 +1111,7 @@ func TestFocusMode_GKeyJumpsToBottom(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	m, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	model = m.(Model)
@@ -1134,7 +1134,7 @@ func TestFocusMode_GKeyIgnoredWhenTaskListFocused(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	m, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	model = m.(Model)
@@ -1158,7 +1158,7 @@ func TestShowLogs_DefaultTrue(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	assert.True(t, model.showLogs, "showLogs should default to true")
 }
@@ -1167,7 +1167,7 @@ func TestShowLogs_ToggleWithOKey(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	newModel, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	model = newModel.(Model)
@@ -1189,7 +1189,7 @@ func TestShowLogs_PanelShowsPlaceholderWhenEmpty(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	newModel, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	model = newModel.(Model)
@@ -1210,7 +1210,7 @@ func TestShowLogs_DisplaysHistoryWhenStopped(t *testing.T) {
 		newMockTask("task1", task.StatusDone, "", nil),
 		newMockTask("task2", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	m, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	model = m.(Model)
@@ -1265,7 +1265,7 @@ func TestShowLogs_AutoscrollStickToBottom(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	newModel, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	model = newModel.(Model)
@@ -1307,7 +1307,7 @@ func TestShowLogs_GetDisplayLogs(t *testing.T) {
 		newMockTask("task2", task.StatusDone, "", nil),
 		newMockTask("task3", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	_, _ = model.exec.RunNext(context.Background())
 
@@ -1359,7 +1359,7 @@ func TestAppContainer_RendersWithBorder(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	model.width = 80
 	model.height = 40
@@ -1379,7 +1379,7 @@ func TestAppContainer_HandlesSmallTerminal(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	model.width = 20
 	model.height = 10
@@ -1395,7 +1395,7 @@ func TestAppContainer_HandlesZeroDimensions(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	model.width = 0
 	model.height = 0
@@ -1410,7 +1410,7 @@ func TestAppContainer_TwoColumnMode(t *testing.T) {
 		newMockTask("task1", task.StatusDone, "", nil),
 		newMockTask("task2", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	model.width = 120
 	model.height = 40
@@ -1427,7 +1427,7 @@ func TestAppContainer_HelpBarInsideContainer(t *testing.T) {
 	tasks := []task.Task{
 		newMockTask("task1", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	newModel, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	model = newModel.(Model)
@@ -1456,7 +1456,7 @@ func TestIntegration_JKNavigationDelegatedToTaskList(t *testing.T) {
 		newMockTask("task2", task.StatusDone, "", nil),
 		newMockTask("task3", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	m, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	model = m.(Model)
@@ -1514,7 +1514,7 @@ func TestIntegration_ArrowKeyNavigationDelegatedToTaskList(t *testing.T) {
 		newMockTask("task2", task.StatusDone, "", nil),
 		newMockTask("task3", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	m, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	model = m.(Model)
@@ -1558,7 +1558,7 @@ func TestIntegration_NavigationBoundsRespected(t *testing.T) {
 		newMockTask("task1", task.StatusDone, "", nil),
 		newMockTask("task2", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	m, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	model = m.(Model)
@@ -1600,7 +1600,7 @@ func TestIntegration_TaskSelectedMsgUpdatesLogViewport(t *testing.T) {
 		newMockTask("task2", task.StatusDone, "", nil),
 		newMockTask("task3", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	m, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	model = m.(Model)
@@ -1679,7 +1679,7 @@ func TestIntegration_SelectionAutoAdvancesOnTaskComplete(t *testing.T) {
 		newMockTask("task2", task.StatusDone, "", nil),
 		newMockTask("task3", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	m, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	model = m.(Model)
@@ -1723,7 +1723,7 @@ func TestIntegration_SelectionNotAdvancedOnFailure(t *testing.T) {
 		newMockTask("task2", task.StatusFailed, "", errors.New("failure")),
 		newMockTask("task3", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	m, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	model = m.(Model)
@@ -1753,7 +1753,7 @@ func TestIntegration_NavigationDelegatedOnlyWhenTaskListFocused(t *testing.T) {
 		newMockTask("task1", task.StatusDone, "", nil),
 		newMockTask("task2", task.StatusDone, "", nil),
 	}
-	model := New(tasks)
+	model := New(tasks, "")
 
 	m, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	model = m.(Model)

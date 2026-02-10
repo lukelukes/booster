@@ -14,16 +14,23 @@ type Runner interface {
 	LookPath(name string) (string, error)
 }
 
-type RealRunner struct{}
+type RealRunner struct {
+	LogWriter io.Writer
+}
 
 func (r *RealRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	var out bytes.Buffer
 
-	var w io.Writer = &out
-	if stream := logstream.Writer(ctx); stream != nil {
-		w = io.MultiWriter(&out, stream)
+	var writers []io.Writer
+	writers = append(writers, &out)
+	if r.LogWriter != nil {
+		writers = append(writers, r.LogWriter)
 	}
+	if stream := logstream.Writer(ctx); stream != nil {
+		writers = append(writers, stream)
+	}
+	w := io.MultiWriter(writers...)
 
 	cmd.Stdout = w
 	cmd.Stderr = w

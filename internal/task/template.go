@@ -1,7 +1,7 @@
 package task
 
 import (
-	"booster/internal/pathutil"
+	"booster/internal/expr"
 	"bytes"
 	"context"
 	"fmt"
@@ -37,8 +37,8 @@ func (t *TemplateRender) NeedsSudo() bool {
 }
 
 func (t *TemplateRender) Run(ctx context.Context) Result {
-	source := pathutil.Expand(t.Source)
-	target := pathutil.Expand(t.Target)
+	source := expr.ExpandPath(t.Source)
+	target := expr.ExpandPath(t.Target)
 
 	tmplContent, err := os.ReadFile(source)
 	if err != nil {

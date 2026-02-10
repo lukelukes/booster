@@ -1,4 +1,4 @@
-package pathutil
+package expr
 
 import (
 	"os"
@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestExpand(t *testing.T) {
+func TestExpandPath(t *testing.T) {
 	home, err := os.UserHomeDir()
 	require.NoError(t, err)
 
@@ -49,7 +49,7 @@ func TestExpand(t *testing.T) {
 			expected: home,
 		},
 		{
-			name:     "bare tilde unchanged (no slash)",
+			name:     "bare tilde unchanged",
 			input:    "~",
 			expected: "~",
 		},
@@ -57,19 +57,19 @@ func TestExpand(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := Expand(tt.input)
+			result := ExpandPath(tt.input)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
 
-func TestExpand_FallsBackWhenHomeUnset(t *testing.T) {
+func TestExpandPath_FallsBackWhenHomeUnset(t *testing.T) {
 	t.Setenv("HOME", "")
 	t.Setenv("USER", "")
 
 	require.NoError(t, os.Unsetenv("HOME"))
 	require.NoError(t, os.Unsetenv("USER"))
 
-	result := Expand("~/test")
+	result := ExpandPath("~/test")
 	assert.Equal(t, "~/test", result)
 }

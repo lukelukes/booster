@@ -1,7 +1,7 @@
 package task
 
 import (
-	"booster/internal/pathutil"
+	"booster/internal/expr"
 	"context"
 	"errors"
 	"fmt"
@@ -21,7 +21,7 @@ func (t *DirCreate) NeedsSudo() bool {
 }
 
 func (t *DirCreate) Run(ctx context.Context) Result {
-	expanded := pathutil.Expand(t.Path)
+	expanded := expr.ExpandPath(t.Path)
 
 	info, err := os.Stat(expanded)
 	if err == nil {

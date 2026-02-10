@@ -1,7 +1,7 @@
 package task
 
 import (
-	"booster/internal/pathutil"
+	"booster/internal/expr"
 	"context"
 	"fmt"
 	"os"
@@ -22,8 +22,8 @@ func (t *SymlinkCreate) NeedsSudo() bool {
 }
 
 func (t *SymlinkCreate) Run(ctx context.Context) Result {
-	source := pathutil.Expand(t.Source)
-	target := pathutil.Expand(t.Target)
+	source := expr.ExpandPath(t.Source)
+	target := expr.ExpandPath(t.Target)
 
 	if !filepath.IsAbs(source) {
 		var err error

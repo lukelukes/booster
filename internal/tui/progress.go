@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"booster/internal/util"
 	"fmt"
 	"strings"
 	"time"
@@ -68,7 +67,7 @@ func RenderProgressWithOptions(current, total int, elapsed time.Duration, width 
 		barWidth = maxWidth
 	}
 
-	filledCount := util.Clamp((current*barWidth)/total, 0, barWidth)
+	filledCount := max(0, min((current*barWidth)/total, barWidth))
 
 	filled := strings.Repeat("█", filledCount)
 	empty := strings.Repeat("░", barWidth-filledCount)

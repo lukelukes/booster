@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"booster/internal/util"
 	"fmt"
 	"math"
 	"strings"
@@ -124,7 +123,7 @@ func renderStatLine(count int, label string, percent float64, style lipgloss.Sty
 }
 
 func renderMiniBar(percent float64, width int) string {
-	filled := util.Clamp(int(math.Round(percent/100*float64(width))), 0, width)
+	filled := max(0, min(int(math.Round(percent/100*float64(width))), width))
 	empty := width - filled
 
 	filledBar := summaryBarStyle.Render(strings.Repeat("█", filled))

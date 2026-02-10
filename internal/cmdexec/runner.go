@@ -1,7 +1,6 @@
 package cmdexec
 
 import (
-	"booster/internal/logstream"
 	"bytes"
 	"context"
 	"io"
@@ -22,15 +21,10 @@ func (r *RealRunner) Run(ctx context.Context, name string, args ...string) ([]by
 	cmd := exec.CommandContext(ctx, name, args...)
 	var out bytes.Buffer
 
-	var writers []io.Writer
-	writers = append(writers, &out)
+	w := io.Writer(&out)
 	if r.LogWriter != nil {
-		writers = append(writers, r.LogWriter)
+		w = io.MultiWriter(&out, r.LogWriter)
 	}
-	if stream := logstream.Writer(ctx); stream != nil {
-		writers = append(writers, stream)
-	}
-	w := io.MultiWriter(writers...)
 
 	cmd.Stdout = w
 	cmd.Stderr = w

@@ -373,7 +373,6 @@ func TestBuilder_Build_ResolvesArgsBeforeFactory_TableDriven(t *testing.T) {
 			_, err := builder.Build([]config.Task{{Action: "capture", Args: tt.args}})
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, captured)
-			assert.False(t, hasUnresolvedExprToken(captured), "factory must not receive unresolved ${...} tokens")
 		})
 	}
 }

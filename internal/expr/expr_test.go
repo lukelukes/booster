@@ -377,26 +377,17 @@ func TestValue_NestedBraces(t *testing.T) {
 }
 
 func TestContext_CloneIsolation(t *testing.T) {
-	// Verify that WithProfile/WithVars create truly independent contexts
 	original := NewContext()
 	original.Vars["key"] = "original"
-	original.SetTaskResult("task1", "output1", "done")
 
-	// Create child contexts
 	child1 := original.WithProfile("profile1")
 	child2 := original.WithVars(map[string]any{"key": "child2"})
 
-	// Mutate child contexts
 	child1.Vars["key"] = "mutated1"
-	child1.SetTaskResult("task2", "output2", "done")
 
-	// Verify original is unchanged
 	assert.Equal(t, "original", original.Vars["key"], "original.Vars should be unchanged")
 	assert.Empty(t, original.Profile, "original.Profile should be unchanged")
-	_, hasTask2 := original.Tasks["task2"]
-	assert.False(t, hasTask2, "original.Tasks should not have task2")
 
-	// Verify children are independent
 	assert.Equal(t, "profile1", child1.Profile)
 	assert.Equal(t, "child2", child2.Vars["key"])
 	assert.Empty(t, child2.Profile, "child2 should not inherit child1's profile")

@@ -17,23 +17,15 @@ type Context struct {
 	Env map[string]string `expr:"env"`
 
 	Vars map[string]any `expr:"vars"`
-
-	Tasks map[string]TaskResult `expr:"tasks"`
-}
-
-type TaskResult struct {
-	Output any    `expr:"output"`
-	Status string `expr:"status"` // "done", "failed", "skipped"
 }
 
 func NewContext() *Context {
 	return &Context{
-		OS:    normalizeOS(detectOS()),
+		OS:    detectOS(),
 		Arch:  runtime.GOARCH,
 		Home:  os.Getenv("HOME"),
 		Env:   envToMap(),
 		Vars:  make(map[string]any),
-		Tasks: make(map[string]TaskResult),
 	}
 }
 
@@ -49,10 +41,6 @@ func (c *Context) WithVars(vars map[string]any) *Context {
 	return cp
 }
 
-func (c *Context) SetTaskResult(name string, output any, status string) {
-	c.Tasks[name] = TaskResult{Output: output, Status: status}
-}
-
 func (c *Context) clone() *Context {
 	cp := *c
 
@@ -61,9 +49,6 @@ func (c *Context) clone() *Context {
 
 	cp.Vars = make(map[string]any, len(c.Vars))
 	maps.Copy(cp.Vars, c.Vars)
-
-	cp.Tasks = make(map[string]TaskResult, len(c.Tasks))
-	maps.Copy(cp.Tasks, c.Tasks)
 
 	return &cp
 }
@@ -77,6 +62,3 @@ func envToMap() map[string]string {
 	return env
 }
 
-func normalizeOS(goos string) string {
-	return goos
-}

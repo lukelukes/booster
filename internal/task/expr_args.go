@@ -107,4 +107,3 @@ func isPathIdentifier(s string) bool {
 	}
 	return true
 }
-

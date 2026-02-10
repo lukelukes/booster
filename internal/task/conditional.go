@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 type ConditionalTask struct {
@@ -70,9 +71,21 @@ func (t *ConditionalTask) Run(ctx context.Context) Result {
 const maxWhenMessageLen = 120
 
 func formatWhenForMessage(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if len(trimmed) <= maxWhenMessageLen {
-		return trimmed
+	sanitized := strings.TrimSpace(raw)
+	sanitized = strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			return ' '
+		case unicode.IsControl(r):
+			return -1
+		default:
+			return r
+		}
+	}, sanitized)
+	sanitized = strings.Join(strings.Fields(sanitized), " ")
+
+	if len(sanitized) <= maxWhenMessageLen {
+		return sanitized
 	}
-	return trimmed[:maxWhenMessageLen-3] + "..."
+	return sanitized[:maxWhenMessageLen-3] + "..."
 }

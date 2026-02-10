@@ -136,6 +136,12 @@ func TestFormatWhenForMessage_Truncates(t *testing.T) {
 	assert.True(t, strings.HasSuffix(formatted, "..."))
 }
 
+func TestFormatWhenForMessage_SanitizesControlCharacters(t *testing.T) {
+	formatted := formatWhenForMessage("\n ${ os == \"arch\" }\t\x00\x1b")
+
+	assert.Equal(t, `${ os == "arch" }`, formatted)
+}
+
 func mustValue(t *testing.T, s string) *expr.Value {
 	t.Helper()
 	v, err := expr.NewValue(s)

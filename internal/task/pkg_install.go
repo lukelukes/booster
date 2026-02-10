@@ -241,7 +241,7 @@ func (t *PkgInstall) validateCaskSupport() error {
 	}
 	if len(t.Casks) > 0 {
 		if _, ok := t.Manager.(CaskInstaller); !ok {
-			return fmt.Errorf("casks specified but manager does not support casks")
+			return errors.New("casks specified but manager does not support casks")
 		}
 	}
 	return nil
@@ -274,7 +274,7 @@ func (t *PkgInstall) findMissingCasks(ctx context.Context) ([]string, error) {
 
 	caskMgr, ok := t.Manager.(CaskInstaller)
 	if !ok {
-		return nil, fmt.Errorf("manager does not support casks")
+		return nil, errors.New("manager does not support casks")
 	}
 
 	installed, err := caskMgr.ListInstalledCasks(ctx)

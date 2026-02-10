@@ -46,6 +46,39 @@ func AnyNeedsSudo(tasks []Task) bool {
 	return false
 }
 
+// ExpandConditionalDeferredTask expands a conditional deferred factory task
+// into its generated tasks once the condition resolves to true.
+func ExpandConditionalDeferredTask(t Task) ([]Task, bool, error) {
+	conditional, ok := t.(*ConditionalTask)
+	if !ok {
+		return nil, false, nil
+	}
+
+	deferred, ok := conditional.wrapped.(*DeferredFactoryTask)
+	if !ok {
+		return nil, false, nil
+	}
+
+	shouldRun, err := expr.ResolveCondition(conditional.when, conditional.ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf(
+			"condition evaluation failed for when %q: %w",
+			formatWhenForMessage(conditional.rawWhen),
+			err,
+		)
+	}
+	if !shouldRun {
+		return nil, false, nil
+	}
+
+	loaded, err := deferred.load()
+	if err != nil {
+		return nil, false, err
+	}
+
+	return loaded, true, nil
+}
+
 type Builder struct {
 	factories map[string]Factory
 	exprCtx   *expr.Context
@@ -87,27 +120,28 @@ func (b *Builder) Build(tasks []config.Task) ([]Task, error) {
 				return nil, fmt.Errorf("task %d (%s): invalid when %q: %w", i+1, ct.Action, formatWhenForMessage(whenExpr), err)
 			}
 
-			resolvedArgs, err := resolveTaskArgs(ct.Args, b.exprCtx)
-			if err != nil {
-				var argErr *argResolveError
-				if errors.As(err, &argErr) {
-					return nil, fmt.Errorf("task %d (%s): args%s: %v", i+1, ct.Action, argErr.path, argErr.err)
-				}
-				return nil, fmt.Errorf("task %d (%s): args: %w", i+1, ct.Action, err)
-			}
-
-			created, err := factory(resolvedArgs)
-			if err != nil {
-				return nil, fmt.Errorf("task %d (%s): %w", i+1, ct.Action, err)
-			}
-
-			for _, t := range created {
-				conditional, err := NewConditionalTask(t, whenValue, b.exprCtx, whenExpr)
+			deferred := NewDeferredFactoryTask(ct.Action, func() ([]Task, error) {
+				resolvedArgs, err := resolveTaskArgs(ct.Args, b.exprCtx)
 				if err != nil {
-					return nil, fmt.Errorf("task %d (%s): invalid when %q: %w", i+1, ct.Action, formatWhenForMessage(whenExpr), err)
+					var argErr *argResolveError
+					if errors.As(err, &argErr) {
+						return nil, fmt.Errorf("args%s: %v", argErr.path, argErr.err)
+					}
+					return nil, fmt.Errorf("args: %w", err)
 				}
-				result = append(result, conditional)
+
+				created, err := factory(resolvedArgs)
+				if err != nil {
+					return nil, err
+				}
+				return created, nil
+			})
+
+			conditional, err := NewConditionalTask(deferred, whenValue, b.exprCtx, whenExpr)
+			if err != nil {
+				return nil, fmt.Errorf("task %d (%s): invalid when %q: %w", i+1, ct.Action, formatWhenForMessage(whenExpr), err)
 			}
+			result = append(result, conditional)
 			continue
 		}
 

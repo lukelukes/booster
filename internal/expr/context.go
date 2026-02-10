@@ -21,11 +21,11 @@ type Context struct {
 
 func NewContext() *Context {
 	return &Context{
-		OS:    detectOS(),
-		Arch:  runtime.GOARCH,
-		Home:  os.Getenv("HOME"),
-		Env:   envToMap(),
-		Vars:  make(map[string]any),
+		OS:   detectOS(),
+		Arch: runtime.GOARCH,
+		Home: os.Getenv("HOME"),
+		Env:  envToMap(),
+		Vars: make(map[string]any),
 	}
 }
 
@@ -61,4 +61,3 @@ func envToMap() map[string]string {
 	}
 	return env
 }
-

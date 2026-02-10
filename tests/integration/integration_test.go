@@ -22,9 +22,7 @@ func runTasks(t *testing.T, tasks []task.Task) {
 	t.Helper()
 	ctx := context.Background()
 	for i, taskRun := range tasks {
-		start := time.Now()
 		result := taskRun.Run(ctx)
-		result.Duration = time.Since(start)
 		if result.Status == task.StatusFailed {
 			t.Fatalf("task %d failed: %v", i+1, result.Error)
 		}

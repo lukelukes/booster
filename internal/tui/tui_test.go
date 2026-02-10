@@ -1,10 +1,11 @@
 package tui
 
 import (
+	"booster/internal/expr"
 	"booster/internal/task"
 	"context"
-	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
@@ -124,6 +125,135 @@ func TestView_FailedShowsError(t *testing.T) {
 	assert.Contains(t, view, "└")
 }
 
+func TestView_NarrowWidthDoesNotPanic(t *testing.T) {
+	tasks := []task.Task{&mockTask{name: "very-long-task-name-to-force-truncation", result: task.Result{Status: task.StatusPending}}}
+	model := New(tasks, "")
+	model.width = 5
+
+	assert.NotPanics(t, func() {
+		_ = model.View()
+	})
+}
+
+func TestFooter_IncludesFailedTasksInCompletedCount(t *testing.T) {
+	model := New([]task.Task{}, "")
+	model.tasks = []task.Task{
+		&mockTask{name: "done"},
+		&mockTask{name: "skipped"},
+		&mockTask{name: "failed"},
+	}
+	model.results = []task.Result{
+		{Status: task.StatusDone},
+		{Status: task.StatusSkipped},
+		{Status: task.StatusFailed},
+	}
+	model.current = len(model.tasks)
+	model.aborted = true
+
+	text := footer(model)
+	assert.Contains(t, text, "3/3")
+	assert.Contains(t, text, "1 failed")
+}
+
+func TestUpdate_KeyQuitCancelsRunningTask(t *testing.T) {
+	canceled := make(chan struct{})
+	model := New([]task.Task{}, "")
+	model.cancelCurrent = func() {
+		close(canceled)
+	}
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	m := updated.(Model)
+
+	assert.True(t, m.aborted)
+	assert.True(t, m.quitting)
+	assert.Nil(t, cmd)
+	select {
+	case <-canceled:
+	default:
+		t.Fatal("expected running task context to be canceled")
+	}
+}
+
+func TestUpdate_KeyQuitWhileRunning_QuitsAfterTaskDoneHandled(t *testing.T) {
+	model := New([]task.Task{newMockTask("task1", task.StatusDone, "", nil)}, "")
+	model.cancelCurrent = func() {}
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	m := updated.(Model)
+	require.Nil(t, cmd)
+	assert.True(t, m.quitting)
+
+	updated, cmd = m.Update(taskDoneMsg{index: 0, result: task.Result{Status: task.StatusFailed, Error: context.Canceled}})
+	m = updated.(Model)
+	require.NotNil(t, cmd)
+	_, ok := cmd().(tea.QuitMsg)
+	assert.True(t, ok)
+	assert.Equal(t, 1, m.current)
+}
+
+func TestUpdate_StartTask_ExpandsConditionalDeferredTasks(t *testing.T) {
+	exprCtx := expr.NewContext().WithProfile("work")
+	exprCtx.OS = "arch"
+
+	factoryCalls := 0
+	deferred := task.NewDeferredFactoryTask("capture", func() ([]task.Task, error) {
+		factoryCalls++
+		return []task.Task{
+			newMockTask("task1", task.StatusDone, "", nil),
+			newMockTask("task2", task.StatusDone, "", nil),
+		}, nil
+	})
+
+	when, err := expr.NewValue(`${ os == "arch" }`)
+	require.NoError(t, err)
+	conditional, err := task.NewConditionalTask(deferred, when, exprCtx, `${ os == "arch" }`)
+	require.NoError(t, err)
+
+	model := New([]task.Task{conditional}, "")
+	updated, cmd := model.Update(startTaskMsg{})
+	m := updated.(Model)
+
+	require.NotNil(t, cmd)
+	assert.Equal(t, 1, factoryCalls)
+	assert.Len(t, m.tasks, 2)
+	assert.Len(t, m.results, 2)
+	assert.Equal(t, "task1", m.tasks[0].Name())
+	assert.Equal(t, "task2", m.tasks[1].Name())
+}
+
+func TestRunTaskAsync_UsesProvidedContext(t *testing.T) {
+	blocking := &mockTask{
+		name: "blocking",
+		runWithContext: func(ctx context.Context) task.Result {
+			<-ctx.Done()
+			return task.Result{Status: task.StatusFailed, Error: context.Canceled, Message: context.Canceled.Error()}
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cmd := runTaskAsync(ctx, blocking, 0)
+	resultCh := make(chan tea.Msg, 1)
+	go func() {
+		resultCh <- cmd()
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case msg := <-resultCh:
+		done, ok := msg.(taskDoneMsg)
+		require.True(t, ok)
+		assert.Equal(t, task.StatusFailed, done.result.Status)
+		assert.ErrorIs(t, done.result.Error, context.Canceled)
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected async task to finish after cancellation")
+	}
+}
+
 func TestUpdate_StopsOnFailure(t *testing.T) {
 	tasks := []task.Task{
 		&mockTask{name: "fail", result: task.Result{Status: task.StatusFailed}},
@@ -156,10 +286,11 @@ func TestUpdate_StopsOnFailure(t *testing.T) {
 }
 
 type mockTask struct {
-	name     string
-	result   task.Result
-	runFunc  func()
-	needsSudo bool
+	name           string
+	result         task.Result
+	runFunc        func()
+	runWithContext func(context.Context) task.Result
+	needsSudo      bool
 }
 
 func (t *mockTask) Name() string {
@@ -167,6 +298,9 @@ func (t *mockTask) Name() string {
 }
 
 func (t *mockTask) Run(ctx context.Context) task.Result {
+	if t.runWithContext != nil {
+		return t.runWithContext(ctx)
+	}
 	if t.runFunc != nil {
 		t.runFunc()
 	}
@@ -179,7 +313,7 @@ func (t *mockTask) NeedsSudo() bool {
 
 func TestDots(t *testing.T) {
 	result := dots("short", 60)
-	assert.True(t, strings.Contains(result, "·"))
+	assert.Contains(t, result, "·")
 }
 
 func TestTruncate(t *testing.T) {

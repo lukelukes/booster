@@ -253,9 +253,37 @@ func TestBuilder_Build_InvalidConditionExpression(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid when")
 }
 
-func TestBuilder_Build_ConditionalWithInvalidArgsFailsAtBuild(t *testing.T) {
+func TestBuilder_Build_ConditionalWithInvalidArgsDoesNotFailBuildWhenConditionFalse(t *testing.T) {
 	exprCtx := expr.NewContext().WithProfile("work")
 	exprCtx.OS = "darwin"
+
+	factoryCalls := 0
+	builder := NewBuilder().
+		WithExprContext(exprCtx).
+		Register("capture", func(args any) ([]Task, error) {
+			factoryCalls++
+			return []Task{&mockTask{name: "capture", result: Result{Status: StatusDone}}}, nil
+		})
+
+	tasks, err := builder.Build([]config.Task{{
+		Action: "capture",
+		When:   func() *config.WhenExpr { w := config.WhenExpr(`${ os == "arch" }`); return &w }(),
+		Args: map[string]any{
+			"bad": "${ 1 + }",
+		},
+	}})
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	assert.Equal(t, 0, factoryCalls)
+
+	result := tasks[0].Run(context.Background())
+	assert.Equal(t, StatusSkipped, result.Status)
+	assert.Equal(t, 0, factoryCalls)
+}
+
+func TestBuilder_Build_ConditionalWithInvalidArgsFailsAtRuntimeWhenConditionTrue(t *testing.T) {
+	exprCtx := expr.NewContext().WithProfile("work")
+	exprCtx.OS = "arch"
 
 	builder := NewBuilder().
 		WithExprContext(exprCtx).
@@ -263,15 +291,19 @@ func TestBuilder_Build_ConditionalWithInvalidArgsFailsAtBuild(t *testing.T) {
 			return []Task{&mockTask{name: "capture", result: Result{Status: StatusDone}}}, nil
 		})
 
-	_, err := builder.Build([]config.Task{{
+	tasks, err := builder.Build([]config.Task{{
 		Action: "capture",
 		When:   func() *config.WhenExpr { w := config.WhenExpr(`${ os == "arch" }`); return &w }(),
 		Args: map[string]any{
 			"bad": "${ 1 + }",
 		},
 	}})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "args")
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+
+	result := tasks[0].Run(context.Background())
+	assert.Equal(t, StatusFailed, result.Status)
+	assert.Contains(t, result.Message, "args.bad")
 }
 
 func TestBuilder_Build_WhenEvaluatesAtRuntime(t *testing.T) {
@@ -449,7 +481,7 @@ func TestBuilder_AnyNeedsSudo_ConditionalTask(t *testing.T) {
 			os:               "darwin",
 			args:             nil,
 			wantAnyNeedsSudo: false,
-			wantFactoryCalls: 1,
+			wantFactoryCalls: 0,
 			wantRunStatus:    StatusSkipped,
 		},
 	}
@@ -474,9 +506,10 @@ func TestBuilder_AnyNeedsSudo_ConditionalTask(t *testing.T) {
 			}})
 			require.NoError(t, err)
 			require.Len(t, tasks, 1)
-			assert.Equal(t, tt.wantFactoryCalls, factoryCalls)
+			assert.Equal(t, 0, factoryCalls)
 
 			assert.Equal(t, tt.wantAnyNeedsSudo, AnyNeedsSudo(tasks))
+			assert.Equal(t, tt.wantFactoryCalls, factoryCalls)
 
 			result := tasks[0].Run(context.Background())
 			assert.Equal(t, tt.wantRunStatus, result.Status)
@@ -495,3 +528,99 @@ func TestConditionalTask_NeedsSudo_ConditionErrorIsConservative(t *testing.T) {
 	assert.True(t, ct.NeedsSudo(), "condition evaluation errors should be treated as sudo-needed")
 }
 
+func TestExpandConditionalDeferredTask_ExpandsGeneratedTasksLazily(t *testing.T) {
+	exprCtx := expr.NewContext().WithProfile("work")
+	exprCtx.OS = "arch"
+
+	factoryCalls := 0
+	deferred := NewDeferredFactoryTask("capture", func() ([]Task, error) {
+		factoryCalls++
+		return []Task{
+			&mockTask{name: "one", result: Result{Status: StatusDone}},
+			&mockTask{name: "two", result: Result{Status: StatusDone}},
+		}, nil
+	})
+
+	conditional, err := NewConditionalTask(deferred, mustValue(t, `${ os == "arch" }`), exprCtx, `${ os == "arch" }`)
+	require.NoError(t, err)
+	assert.Equal(t, 0, factoryCalls)
+
+	expanded, ok, err := ExpandConditionalDeferredTask(conditional)
+	require.NoError(t, err)
+	assert.True(t, ok)
+	require.Len(t, expanded, 2)
+	assert.Equal(t, 1, factoryCalls)
+	assert.Equal(t, "one", expanded[0].Name())
+	assert.Equal(t, "two", expanded[1].Name())
+
+	expandedAgain, ok, err := ExpandConditionalDeferredTask(conditional)
+	require.NoError(t, err)
+	assert.True(t, ok)
+	require.Len(t, expandedAgain, 2)
+	assert.Equal(t, 1, factoryCalls)
+}
+
+func TestExpandConditionalDeferredTask_DoesNotExpandWhenConditionFalse(t *testing.T) {
+	exprCtx := expr.NewContext().WithProfile("work")
+	exprCtx.OS = "darwin"
+
+	factoryCalls := 0
+	deferred := NewDeferredFactoryTask("capture", func() ([]Task, error) {
+		factoryCalls++
+		return []Task{&mockTask{name: "one", result: Result{Status: StatusDone}}}, nil
+	})
+
+	conditional, err := NewConditionalTask(deferred, mustValue(t, `${ os == "arch" }`), exprCtx, `${ os == "arch" }`)
+	require.NoError(t, err)
+
+	expanded, ok, err := ExpandConditionalDeferredTask(conditional)
+	require.NoError(t, err)
+	assert.False(t, ok)
+	assert.Nil(t, expanded)
+	assert.Equal(t, 0, factoryCalls)
+}
+
+func TestDeferredFactoryTask_Run_AllSkippedAggregatesSkipped(t *testing.T) {
+	deferred := NewDeferredFactoryTask("capture", func() ([]Task, error) {
+		return []Task{
+			&mockTask{name: "one", result: Result{Status: StatusSkipped, Message: "one skipped"}},
+			&mockTask{name: "two", result: Result{Status: StatusSkipped, Message: "two skipped"}},
+		}, nil
+	})
+
+	result := deferred.Run(context.Background())
+	assert.Equal(t, StatusSkipped, result.Status)
+	assert.Contains(t, result.Message, "one skipped")
+	assert.Contains(t, result.Message, "two skipped")
+}
+
+func TestDeferredFactoryTask_NeedsSudo_LoadErrorReturnsFalse(t *testing.T) {
+	deferred := NewDeferredFactoryTask("capture", func() ([]Task, error) {
+		return nil, errors.New("prepare failed")
+	})
+
+	assert.False(t, deferred.NeedsSudo())
+}
+
+func TestBuilder_AnyNeedsSudo_DeferredPreparationErrorDoesNotRequireSudo(t *testing.T) {
+	exprCtx := expr.NewContext().WithProfile("work")
+	exprCtx.OS = "arch"
+
+	builder := NewBuilder().
+		WithExprContext(exprCtx).
+		Register("capture", func(args any) ([]Task, error) {
+			return []Task{&mockTask{name: "ok", result: Result{Status: StatusDone}}}, nil
+		})
+
+	tasks, err := builder.Build([]config.Task{{
+		Action: "capture",
+		When:   func() *config.WhenExpr { w := config.WhenExpr(`${ os == "arch" }`); return &w }(),
+		Args: map[string]any{
+			"bad": "${ 1 + }",
+		},
+	}})
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+
+	assert.False(t, AnyNeedsSudo(tasks))
+}

@@ -66,11 +66,11 @@ func (c *RunCmd) Run(cli *CLI) error {
 	if c.DryRun {
 		runner = cmdexec.DefaultRunner()
 	} else {
-		logPath = fmt.Sprintf("/tmp/booster-%d.log", os.Getpid())
-		logFile, err := os.Create(logPath)
+		logFile, err := os.CreateTemp("", "booster-*.log")
 		if err != nil {
 			return fmt.Errorf("create log file: %w", err)
 		}
+		logPath = logFile.Name()
 		defer logFile.Close()
 		runner = &cmdexec.RealRunner{LogWriter: logFile}
 	}

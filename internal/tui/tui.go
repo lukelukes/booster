@@ -28,15 +28,18 @@ type spinnerTickMsg struct{}
 type tickMsg struct{}
 
 type Model struct {
-	tasks    []task.Task
-	results  []task.Result
-	current  int
-	aborted  bool
+	tasks     []task.Task
+	results   []task.Result
+	current   int
+	aborted   bool
+	quitting  bool
 	startTime time.Time
-	width    int
-	spinner  SpinnerModel
-	logPath  string
-	elapsed  time.Duration
+	width     int
+	spinner   SpinnerModel
+	logPath   string
+	elapsed   time.Duration
+
+	cancelCurrent context.CancelFunc
 }
 
 func New(tasks []task.Task, logPath string) Model {
@@ -56,7 +59,11 @@ func (m Model) Init() tea.Cmd {
 	if m.done() {
 		return nil
 	}
-	return func() tea.Msg { return startTaskMsg{} }
+	return tea.Batch(
+		func() tea.Msg { return startTaskMsg{} },
+		m.spinner.Tick(),
+		tickEvery(time.Second),
+	)
 }
 
 func (m Model) done() bool {
@@ -68,26 +75,18 @@ func (m Model) stopped() bool {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if batch, ok := msg.(tea.BatchMsg); ok {
-		var cmd tea.Cmd
-		for _, c := range batch {
-			if c != nil {
-				bmsg := c()
-				var updated tea.Model
-				updated, cmd = m.Update(bmsg)
-				m = updated.(Model)
-				if cmd != nil {
-					return m, cmd
-				}
-			}
-		}
-		return m, nil
-	}
-
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" || msg.String() == "q" {
+			if m.cancelCurrent != nil {
+				m.cancelCurrent()
+				m.cancelCurrent = nil
+				m.aborted = true
+				m.quitting = true
+				return m, nil
+			}
 			m.aborted = true
+			m.finalizeElapsed()
 			return m, tea.Quit
 		}
 		if m.stopped() && msg.String() == "enter" {
@@ -96,9 +95,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
-		if m.width < 40 {
-			m.width = 80
-		}
 
 	case startTaskMsg:
 		if m.done() {
@@ -108,20 +104,47 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.startTime = time.Now()
 		}
 		idx := m.current
-		return m, tea.Batch(
-			runTaskAsync(m.tasks[idx], idx),
-			m.spinner.Tick(),
-			tickEvery(time.Second),
-		)
+
+		expanded, ok, err := task.ExpandConditionalDeferredTask(m.tasks[idx])
+		if err == nil && ok {
+			m.tasks = append(m.tasks[:idx], append(expanded, m.tasks[idx+1:]...)...)
+
+			replacement := make([]task.Result, len(expanded))
+			for i := range replacement {
+				replacement[i] = task.Result{Status: task.StatusPending}
+			}
+			m.results = append(m.results[:idx], append(replacement, m.results[idx+1:]...)...)
+
+			if len(expanded) == 0 {
+				if m.done() {
+					m.finalizeElapsed()
+					return m, nil
+				}
+				return m, func() tea.Msg { return startTaskMsg{} }
+			}
+
+			return m, func() tea.Msg { return startTaskMsg{} }
+		}
+
+		taskCtx, cancel := context.WithCancel(context.Background())
+		m.cancelCurrent = cancel
+		return m, runTaskAsync(taskCtx, m.tasks[idx], idx)
 
 	case taskDoneMsg:
+		m.cancelCurrent = nil
 		m.results[msg.index] = msg.result
 		m.current++
+		if m.quitting {
+			m.finalizeElapsed()
+			return m, tea.Quit
+		}
 		if msg.result.Status == task.StatusFailed {
 			m.aborted = true
+			m.finalizeElapsed()
 			return m, nil
 		}
 		if m.done() {
+			m.finalizeElapsed()
 			return m, nil
 		}
 		return m, func() tea.Msg { return startTaskMsg{} }
@@ -137,7 +160,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.startTime.IsZero() && !m.stopped() {
 			m.elapsed = time.Since(m.startTime)
 		}
-		if !m.done() {
+		if !m.stopped() {
 			return m, tickEvery(time.Second)
 		}
 		return m, nil
@@ -146,13 +169,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func runTaskAsync(t task.Task, index int) tea.Cmd {
+func runTaskAsync(ctx context.Context, t task.Task, index int) tea.Cmd {
 	return func() tea.Msg {
 		start := time.Now()
-		result := t.Run(context.Background())
+		result := t.Run(ctx)
 		result.Duration = time.Since(start)
 		return taskDoneMsg{result: result, index: index}
 	}
+}
+
+func (m *Model) finalizeElapsed() {
+	if m.startTime.IsZero() {
+		return
+	}
+	m.elapsed = time.Since(m.startTime)
 }
 
 func tickEvery(d time.Duration) tea.Cmd {
@@ -187,26 +217,23 @@ func (m Model) View() string {
 
 	for i, t := range m.tasks {
 		r := m.results[i]
-		name := t.Name()
-		if m.width > 0 && len(name) > m.width-20 {
-			name = name[:m.width-23] + "..."
-		}
+		name := truncate(t.Name(), m.width-20)
 
 		switch r.Status {
 		case task.StatusDone:
-			b.WriteString(doneStyle.Render(fmt.Sprintf("  ✓  %s", name)))
+			b.WriteString(doneStyle.Render("  ✓  " + name))
 			b.WriteString(" ")
 			b.WriteString(leaderStyle.Render(dots(name, m.width)))
 			b.WriteString(" ")
 			b.WriteString(dimStyle.Render(formatDuration(r.Duration)))
 		case task.StatusSkipped:
-			b.WriteString(skippedStyle.Render(fmt.Sprintf("  ○  %s", name)))
+			b.WriteString(skippedStyle.Render("  ○  " + name))
 			if r.Message != "" {
 				b.WriteString("\n")
 				b.WriteString(skippedStyle.Render("     └ " + truncate(r.Message, m.width-6)))
 			}
 		case task.StatusFailed:
-			b.WriteString(failedStyle.Render(fmt.Sprintf("  ✗  %s", name)))
+			b.WriteString(failedStyle.Render("  ✗  " + name))
 			if r.Error != nil {
 				b.WriteString("\n")
 				b.WriteString(failedStyle.Render("     └ " + truncate(r.Error.Error(), m.width-6)))
@@ -221,12 +248,12 @@ func (m Model) View() string {
 				b.WriteString(leaderStyle.Render(dots(name, m.width)))
 				b.WriteString(" ")
 				elapsed := m.elapsed
-				if !m.startTime.IsZero() {
+				if !m.startTime.IsZero() && !m.stopped() {
 					elapsed = time.Since(m.startTime)
 				}
 				b.WriteString(dimStyle.Render(formatDuration(elapsed)))
 			} else {
-				b.WriteString(pendingStyle.Render(fmt.Sprintf("  ·  %s", name)))
+				b.WriteString(pendingStyle.Render("  ·  " + name))
 			}
 		}
 		b.WriteString("\n")
@@ -241,19 +268,19 @@ func dots(name string, width int) string {
 	if width <= 0 {
 		width = 60
 	}
-	need := width - lipglossWidth(name) - 15
-	if need < 3 {
-		need = 3
-	}
+	need := max(width-lipglossWidth(name)-15, 3)
 	return strings.Repeat("·", need)
 }
 
-func truncate(s string, max int) string {
+func truncate(s string, limit int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) <= max || max <= 0 {
+	if limit <= 0 || len(s) <= limit {
 		return s
 	}
-	return s[:max-3] + "..."
+	if limit <= 3 {
+		return s[:limit]
+	}
+	return s[:limit-3] + "..."
 }
 
 func formatDuration(d time.Duration) string {
@@ -284,8 +311,9 @@ func footer(m Model) string {
 	}
 
 	if m.stopped() {
+		completed := done + skipped + failed
 		if failed > 0 {
-			return fmt.Sprintf("  %d/%d · %d failed · %s", done+skipped, total, failed, formatDuration(elapsed))
+			return fmt.Sprintf("  %d/%d · %d failed · %s", completed, total, failed, formatDuration(elapsed))
 		}
 		return fmt.Sprintf("  %d/%d · %d skipped · %s", done, total, skipped, formatDuration(elapsed))
 	}

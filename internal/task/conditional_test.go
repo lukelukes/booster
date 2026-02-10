@@ -128,13 +128,10 @@ func TestNewConditionalTask_Validation(t *testing.T) {
 	}
 }
 
-func TestFormatWhenForMessage_TruncatesAndSanitizes(t *testing.T) {
-	input := "${\n\t" + strings.Repeat("a", 200) + "\r}"
+func TestFormatWhenForMessage_Truncates(t *testing.T) {
+	input := strings.Repeat("a", 200)
 	formatted := formatWhenForMessage(input)
 
-	assert.NotContains(t, formatted, "\n")
-	assert.NotContains(t, formatted, "\t")
-	assert.NotContains(t, formatted, "\r")
 	assert.LessOrEqual(t, len(formatted), maxWhenMessageLen)
 	assert.True(t, strings.HasSuffix(formatted, "..."))
 }

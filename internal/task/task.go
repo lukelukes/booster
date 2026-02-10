@@ -87,12 +87,27 @@ func (b *Builder) Build(tasks []config.Task) ([]Task, error) {
 				return nil, fmt.Errorf("task %d (%s): invalid when %q: %w", i+1, ct.Action, formatWhenForMessage(whenExpr), err)
 			}
 
-			lazy := NewDeferredFactoryTask(ct.Action, ct.Args, factory, b.exprCtx, i+1)
-			conditional, err := NewConditionalTask(lazy, whenValue, b.exprCtx, whenExpr)
+			resolvedArgs, err := resolveTaskArgs(ct.Args, b.exprCtx)
 			if err != nil {
-				return nil, fmt.Errorf("task %d (%s): invalid when %q: %w", i+1, ct.Action, formatWhenForMessage(whenExpr), err)
+				var argErr *argResolveError
+				if errors.As(err, &argErr) {
+					return nil, fmt.Errorf("task %d (%s): args%s: %v", i+1, ct.Action, argErr.path, argErr.err)
+				}
+				return nil, fmt.Errorf("task %d (%s): args: %w", i+1, ct.Action, err)
 			}
-			result = append(result, conditional)
+
+			created, err := factory(resolvedArgs)
+			if err != nil {
+				return nil, fmt.Errorf("task %d (%s): %w", i+1, ct.Action, err)
+			}
+
+			for _, t := range created {
+				conditional, err := NewConditionalTask(t, whenValue, b.exprCtx, whenExpr)
+				if err != nil {
+					return nil, fmt.Errorf("task %d (%s): invalid when %q: %w", i+1, ct.Action, formatWhenForMessage(whenExpr), err)
+				}
+				result = append(result, conditional)
+			}
 			continue
 		}
 

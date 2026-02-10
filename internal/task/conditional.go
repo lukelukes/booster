@@ -70,20 +70,9 @@ func (t *ConditionalTask) Run(ctx context.Context) Result {
 const maxWhenMessageLen = 120
 
 func formatWhenForMessage(raw string) string {
-	sanitized := strings.Map(func(r rune) rune {
-		switch r {
-		case '\n', '\r', '\t':
-			return ' '
-		default:
-			if r < 32 {
-				return -1
-			}
-			return r
-		}
-	}, strings.TrimSpace(raw))
-
-	if len(sanitized) <= maxWhenMessageLen {
-		return sanitized
+	trimmed := strings.TrimSpace(raw)
+	if len(trimmed) <= maxWhenMessageLen {
+		return trimmed
 	}
-	return strings.TrimSpace(sanitized[:maxWhenMessageLen-3]) + "..."
+	return trimmed[:maxWhenMessageLen-3] + "..."
 }

@@ -141,6 +141,21 @@ verify-ci: build ## Run all quality checks - in CI
 	@$(MAKE) -j4 vet vuln tidy-check mod-verify
 	@$(MAKE) test-all TESTFLAGS="-count=1"
 
+##@ Docker
+
+.PHONY: docker-build
+docker-build: ## Build Docker image with booster
+	docker build -t booster-sandbox .
+
+.PHONY: docker-run
+docker-run: docker-build ## Run booster in Docker (interactive, tmux)
+	docker run -it --rm \
+		-v $(abspath .):/workspace:rw \
+		-w /workspace \
+		-e HOME=/workspace \
+		-e XDG_DATA_HOME=/workspace/.local/share \
+		booster-sandbox
+
 ##@ Release
 
 .PHONY: confirm

@@ -146,9 +146,9 @@ func renderSlowestTasks(tasks []TaskTiming) string {
 	for i := range limit {
 		task := tasks[i]
 		durationStr := formatDuration(task.Duration)
-		b.WriteString(fmt.Sprintf("     %s   %s",
+		fmt.Fprintf(&b, "     %s   %s",
 			summaryStatStyle.Render(fmt.Sprintf("%6s", durationStr)),
-			summaryStatStyle.Render(task.Name)))
+			summaryStatStyle.Render(task.Name))
 		if i < limit-1 {
 			b.WriteString("\n")
 		}

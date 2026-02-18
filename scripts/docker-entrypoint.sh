@@ -1,7 +1,11 @@
 #!/bin/bash
 set -e
-if [ $# -eq 0 ]; then
-	exec tmux -2 new-session
+
+SESSION="booster"
+
+if [ -t 0 ]; then
+	exec tmux -2 new-session -s "$SESSION" "$@"
 else
-	exec tmux -2 new-session "$@"
+	tmux -2 new-session -d -s "$SESSION" "$@"
+	exec tail -f /dev/null
 fi

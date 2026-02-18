@@ -155,6 +155,24 @@ docker-run: docker-build ## Run booster in Docker (interactive, tmux)
 		-e XDG_DATA_HOME=/workspace/.local/share \
 		booster-sandbox
 
+DOCKER_E2E_CONTAINER := booster-e2e
+
+.PHONY: docker-e2e
+docker-e2e: docker-build ## Start detached container for E2E testing
+	@docker rm -f $(DOCKER_E2E_CONTAINER) 2>/dev/null || true
+	docker run -d --name $(DOCKER_E2E_CONTAINER) \
+		-w /workspace \
+		-e HOME=/workspace \
+		-e XDG_DATA_HOME=/workspace/.local/share \
+		booster-sandbox
+	@echo "Container ready. Send commands with:"
+	@echo "  docker exec $(DOCKER_E2E_CONTAINER) tmux send-keys 'booster apply' Enter"
+	@echo "  docker exec $(DOCKER_E2E_CONTAINER) tmux capture-pane -p"
+
+.PHONY: docker-e2e-stop
+docker-e2e-stop: ## Stop E2E testing container
+	docker rm -f $(DOCKER_E2E_CONTAINER)
+
 ##@ Release
 
 .PHONY: confirm

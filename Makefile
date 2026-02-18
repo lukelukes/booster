@@ -150,7 +150,6 @@ docker-build: ## Build Docker image with booster
 .PHONY: docker-run
 docker-run: docker-build ## Run booster in Docker (interactive, tmux)
 	docker run -it --rm \
-		-v $(abspath .):/workspace:rw \
 		-w /workspace \
 		-e HOME=/workspace \
 		-e XDG_DATA_HOME=/workspace/.local/share \

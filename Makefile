@@ -50,6 +50,10 @@ bench: ## Run benchmarks
 fuzz: ## Run fuzz tests (30s)
 	go test -fuzz=Fuzz -fuzztime=30s ./internal/...
 
+.PHONY: fuzz-long
+fuzz-long: ## Run fuzz tests (5m)
+	go test -fuzz=Fuzz -fuzztime=5m ./internal/...
+
 .PHONY: coverage
 coverage: | $(BUILD_DIR) ## Generate coverage report
 	go test -coverprofile=$(COVER_OUT) ./internal/... ./cmd/...
@@ -90,6 +94,10 @@ mutation-report: | $(BUILD_DIR) ## Generate JSON mutation report
 		--output $(BUILD_DIR)/mutation-report.json
 
 ##@ Lint & QA
+
+.PHONY: fix
+fix: ## Apply go fix modernizers
+	@go fix ./...
 
 .PHONY: install-hooks
 install-hooks: ## Installs lefthook git hooks

@@ -123,8 +123,7 @@ func (b *Builder) Build(tasks []config.Task) ([]Task, error) {
 			deferred := NewDeferredFactoryTask(ct.Action, func() ([]Task, error) {
 				resolvedArgs, err := resolveTaskArgs(ct.Args, b.exprCtx)
 				if err != nil {
-					var argErr *argResolveError
-					if errors.As(err, &argErr) {
+					if argErr, ok := errors.AsType[*argResolveError](err); ok {
 						return nil, fmt.Errorf("args%s: %v", argErr.path, argErr.err)
 					}
 					return nil, fmt.Errorf("args: %w", err)
@@ -147,8 +146,7 @@ func (b *Builder) Build(tasks []config.Task) ([]Task, error) {
 
 		resolvedArgs, err := resolveTaskArgs(ct.Args, b.exprCtx)
 		if err != nil {
-			var argErr *argResolveError
-			if errors.As(err, &argErr) {
+			if argErr, ok := errors.AsType[*argResolveError](err); ok {
 				return nil, fmt.Errorf("task %d (%s): args%s: %v", i+1, ct.Action, argErr.path, argErr.err)
 			}
 			return nil, fmt.Errorf("task %d (%s): args: %w", i+1, ct.Action, err)

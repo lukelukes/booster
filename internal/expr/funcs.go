@@ -45,7 +45,7 @@ func existsFunc(params ...any) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("exists: expected string, got %T", params[0])
 	}
-	expanded := expandPath(path)
+	expanded := resolveExprPath(path)
 	_, err := os.Stat(expanded)
 	return err == nil, nil
 }
@@ -99,7 +99,7 @@ func expandFunc(params ...any) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("expand: expected string, got %T", params[0])
 	}
-	return expandPath(path), nil
+	return resolveExprPath(path), nil
 }
 
 func containsStrFunc(params ...any) (any, error) {
@@ -136,7 +136,7 @@ func joinFunc(params ...any) (any, error) {
 	return strings.Join(strs, sep), nil
 }
 
-func expandPath(path string) string {
+func resolveExprPath(path string) string {
 	if path == "~" {
 		home, _ := os.UserHomeDir()
 		return home
@@ -146,4 +146,15 @@ func expandPath(path string) string {
 		path = filepath.Join(home, path[2:])
 	}
 	return os.ExpandEnv(path)
+}
+
+func ExpandPath(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return path
+		}
+		return filepath.Join(home, path[2:])
+	}
+	return path
 }

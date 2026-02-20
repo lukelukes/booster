@@ -32,12 +32,12 @@ type PackageManager interface {
 	ListInstalled(ctx context.Context) ([]string, error)
 
 	Install(ctx context.Context, pkgs []string) (output string, err error)
+}
 
+type CaskInstaller interface {
 	ListInstalledCasks(ctx context.Context) ([]string, error)
 
 	InstallCasks(ctx context.Context, casks []string) (output string, err error)
-
-	SupportsCasks() bool
 }
 
 type PacmanManager struct {
@@ -81,18 +81,6 @@ func (m *PacmanManager) Install(ctx context.Context, pkgs []string) (string, err
 		return string(output), fmt.Errorf("%s install: %w", helper, err)
 	}
 	return string(output), nil
-}
-
-func (m *PacmanManager) ListInstalledCasks(ctx context.Context) ([]string, error) {
-	return nil, nil
-}
-
-func (m *PacmanManager) InstallCasks(ctx context.Context, casks []string) (string, error) {
-	return "", nil
-}
-
-func (m *PacmanManager) SupportsCasks() bool {
-	return false
 }
 
 type HomebrewManager struct {
@@ -167,10 +155,6 @@ func (m *HomebrewManager) InstallCasks(ctx context.Context, casks []string) (str
 	return string(output), nil
 }
 
-func (m *HomebrewManager) SupportsCasks() bool {
-	return true
-}
-
 func parseLines(output string) []string {
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	var result []string
@@ -232,14 +216,12 @@ func (t *PkgInstall) Run(ctx context.Context) Result {
 		}
 	}
 
-	queryCtx := context.Background()
-
-	toInstall, err := t.findMissingPackages(queryCtx)
+	toInstall, err := t.findMissingPackages(ctx)
 	if err != nil {
 		return Result{Status: StatusFailed, Error: err}
 	}
 
-	casksToInstall, err := t.findMissingCasks(queryCtx)
+	casksToInstall, err := t.findMissingCasks(ctx)
 	if err != nil {
 		return Result{Status: StatusFailed, Error: err}
 	}
@@ -252,8 +234,13 @@ func (t *PkgInstall) Run(ctx context.Context) Result {
 }
 
 func (t *PkgInstall) validateCaskSupport() error {
-	if len(t.Casks) > 0 && t.OS != "darwin" && !t.Manager.SupportsCasks() {
+	if len(t.Casks) > 0 && t.OS != "darwin" {
 		return fmt.Errorf("casks specified but OS is %s (not darwin)", t.OS)
+	}
+	if len(t.Casks) > 0 {
+		if _, ok := t.Manager.(CaskInstaller); !ok {
+			return errors.New("casks specified but manager does not support casks")
+		}
 	}
 	return nil
 }
@@ -283,7 +270,12 @@ func (t *PkgInstall) findMissingCasks(ctx context.Context) ([]string, error) {
 		return nil, nil
 	}
 
-	installed, err := t.Manager.ListInstalledCasks(ctx)
+	caskMgr, ok := t.Manager.(CaskInstaller)
+	if !ok {
+		return nil, errors.New("manager does not support casks")
+	}
+
+	installed, err := caskMgr.ListInstalledCasks(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list installed casks: %w", err)
 	}
@@ -296,13 +288,6 @@ func (t *PkgInstall) findMissingCasks(ctx context.Context) ([]string, error) {
 		}
 	}
 	return toInstall, nil
-}
-
-type installStats struct {
-	totalPkgs      int
-	installedPkgs  int
-	totalCasks     int
-	installedCasks int
 }
 
 func (t *PkgInstall) performInstallation(ctx context.Context, packages, casks []string) Result {
@@ -319,7 +304,8 @@ func (t *PkgInstall) performInstallation(ctx context.Context, packages, casks []
 	}
 
 	if len(casks) > 0 {
-		output, err := t.Manager.InstallCasks(ctx, casks)
+		caskMgr := t.Manager.(CaskInstaller)
+		output, err := caskMgr.InstallCasks(ctx, casks)
 		if output != "" {
 			if allOutput.Len() > 0 {
 				allOutput.WriteString("\n")
@@ -331,43 +317,35 @@ func (t *PkgInstall) performInstallation(ctx context.Context, packages, casks []
 		}
 	}
 
-	stats := installStats{
-		totalPkgs:      len(t.Packages),
-		installedPkgs:  len(packages),
-		totalCasks:     len(t.Casks),
-		installedCasks: len(casks),
-	}
-	msg := t.buildResultMessage(stats)
+	msg := t.buildResultMessage(packages, casks)
 	return Result{Status: StatusDone, Message: msg, Output: allOutput.String()}
 }
 
-func (t *PkgInstall) buildResultMessage(stats installStats) string {
+func (t *PkgInstall) buildResultMessage(installedPkgs, installedCasks []string) string {
 	var parts []string
 
-	if stats.totalPkgs > 0 {
-		skipped := stats.totalPkgs - stats.installedPkgs
-		parts = append(parts, formatInstallStats("pkg", skipped, stats.installedPkgs))
+	if len(t.Packages) > 0 {
+		skipped := len(t.Packages) - len(installedPkgs)
+		if skipped > 0 && len(installedPkgs) > 0 {
+			parts = append(parts, fmt.Sprintf("%d pkgs (%d existed, %d installed)", len(t.Packages), skipped, len(installedPkgs)))
+		} else if skipped > 0 {
+			parts = append(parts, fmt.Sprintf("%d pkgs (all existed)", skipped))
+		} else {
+			parts = append(parts, fmt.Sprintf("%d pkgs installed", len(installedPkgs)))
+		}
 	}
-	if stats.totalCasks > 0 {
-		skipped := stats.totalCasks - stats.installedCasks
-		parts = append(parts, formatInstallStats("cask", skipped, stats.installedCasks))
+	if len(t.Casks) > 0 {
+		skipped := len(t.Casks) - len(installedCasks)
+		if skipped > 0 && len(installedCasks) > 0 {
+			parts = append(parts, fmt.Sprintf("%d casks (%d existed, %d installed)", len(t.Casks), skipped, len(installedCasks)))
+		} else if skipped > 0 {
+			parts = append(parts, fmt.Sprintf("%d casks (all existed)", skipped))
+		} else {
+			parts = append(parts, fmt.Sprintf("%d casks installed", len(installedCasks)))
+		}
 	}
 
 	return strings.Join(parts, " | ")
-}
-
-func formatInstallStats(category string, skipped, installed int) string {
-	plural := "s"
-	if skipped == 1 && installed == 0 {
-		plural = ""
-	}
-	if skipped > 0 && installed > 0 {
-		return fmt.Sprintf("%d %s%s (%d existed, %d installed)", skipped+installed, category, plural, skipped, installed)
-	}
-	if skipped > 0 {
-		return fmt.Sprintf("%d %s%s (all existed)", skipped, category, plural)
-	}
-	return fmt.Sprintf("%d %s%s installed", installed, category, plural)
 }
 
 type PkgInstallConfig struct {

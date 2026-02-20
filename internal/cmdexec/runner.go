@@ -1,7 +1,6 @@
 package cmdexec
 
 import (
-	"booster/internal/logstream"
 	"bytes"
 	"context"
 	"io"
@@ -14,15 +13,17 @@ type Runner interface {
 	LookPath(name string) (string, error)
 }
 
-type RealRunner struct{}
+type RealRunner struct {
+	LogWriter io.Writer
+}
 
 func (r *RealRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	var out bytes.Buffer
 
-	var w io.Writer = &out
-	if stream := logstream.Writer(ctx); stream != nil {
-		w = io.MultiWriter(&out, stream)
+	w := io.Writer(&out)
+	if r.LogWriter != nil {
+		w = io.MultiWriter(&out, r.LogWriter)
 	}
 
 	cmd.Stdout = w

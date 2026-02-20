@@ -1,7 +1,7 @@
 package config
 
 import (
-	"booster/internal/pathutil"
+	"booster/internal/expr"
 	"errors"
 	"fmt"
 	"os"
@@ -71,7 +71,7 @@ func (s *StringOrSlice) UnmarshalYAML(unmarshal func(any) error) error {
 }
 
 func Load(path string) (*Config, error) {
-	expanded := pathutil.Expand(path)
+	expanded := expr.ExpandPath(path)
 
 	data, err := os.ReadFile(expanded)
 	if err != nil {

@@ -4,9 +4,7 @@ import (
 	"booster/internal/expr"
 	"errors"
 	"fmt"
-	"slices"
 	"sort"
-	"strings"
 )
 
 type argResolveError struct {
@@ -108,22 +106,4 @@ func isPathIdentifier(s string) bool {
 		}
 	}
 	return true
-}
-
-func hasUnresolvedExprToken(v any) bool {
-	switch typed := v.(type) {
-	case string:
-		return strings.Contains(typed, "${")
-	case []any:
-		return slices.ContainsFunc(typed, hasUnresolvedExprToken)
-	case map[string]any:
-		for _, item := range typed {
-			if hasUnresolvedExprToken(item) {
-				return true
-			}
-		}
-		return false
-	default:
-		return false
-	}
 }

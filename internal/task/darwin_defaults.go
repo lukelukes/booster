@@ -2,7 +2,7 @@ package task
 
 import (
 	"booster/internal/cmdexec"
-	"booster/internal/pathutil"
+	"booster/internal/expr"
 	"context"
 	"errors"
 	"fmt"
@@ -205,7 +205,7 @@ func NewDarwinDefaultsFactory(cfg DarwinDefaultsConfig) Factory {
 		resolvedPath := filePath
 		if !strings.HasPrefix(filePath, "/") && !strings.HasPrefix(filePath, "~") {
 			if cfg.ConfigDir != "" {
-				resolvedPath = pathutil.Expand(cfg.ConfigDir) + "/" + filePath
+				resolvedPath = expr.ExpandPath(cfg.ConfigDir) + "/" + filePath
 			}
 		}
 
@@ -248,7 +248,7 @@ func NewDarwinDefaultsFactory(cfg DarwinDefaultsConfig) Factory {
 }
 
 func loadDefaultsFile(path string) ([]DefaultsEntry, error) {
-	expanded := pathutil.Expand(path)
+	expanded := expr.ExpandPath(path)
 
 	data, err := os.ReadFile(expanded)
 	if err != nil {

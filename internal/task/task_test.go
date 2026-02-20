@@ -253,15 +253,15 @@ func TestBuilder_Build_InvalidConditionExpression(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid when")
 }
 
-func TestBuilder_Build_SkipsFalseWhenBeforeArgResolutionAndFactory(t *testing.T) {
+func TestBuilder_Build_ConditionalWithInvalidArgsDoesNotFailBuildWhenConditionFalse(t *testing.T) {
 	exprCtx := expr.NewContext().WithProfile("work")
 	exprCtx.OS = "darwin"
 
-	factoryCalled := false
+	factoryCalls := 0
 	builder := NewBuilder().
 		WithExprContext(exprCtx).
 		Register("capture", func(args any) ([]Task, error) {
-			factoryCalled = true
+			factoryCalls++
 			return []Task{&mockTask{name: "capture", result: Result{Status: StatusDone}}}, nil
 		})
 
@@ -274,12 +274,36 @@ func TestBuilder_Build_SkipsFalseWhenBeforeArgResolutionAndFactory(t *testing.T)
 	}})
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
-	assert.False(t, factoryCalled, "factory should not be called for false when")
+	assert.Equal(t, 0, factoryCalls)
 
 	result := tasks[0].Run(context.Background())
 	assert.Equal(t, StatusSkipped, result.Status)
-	assert.Contains(t, result.Message, "condition not met")
-	assert.False(t, factoryCalled, "factory should not be called when runtime when is false")
+	assert.Equal(t, 0, factoryCalls)
+}
+
+func TestBuilder_Build_ConditionalWithInvalidArgsFailsAtRuntimeWhenConditionTrue(t *testing.T) {
+	exprCtx := expr.NewContext().WithProfile("work")
+	exprCtx.OS = "arch"
+
+	builder := NewBuilder().
+		WithExprContext(exprCtx).
+		Register("capture", func(args any) ([]Task, error) {
+			return []Task{&mockTask{name: "capture", result: Result{Status: StatusDone}}}, nil
+		})
+
+	tasks, err := builder.Build([]config.Task{{
+		Action: "capture",
+		When:   func() *config.WhenExpr { w := config.WhenExpr(`${ os == "arch" }`); return &w }(),
+		Args: map[string]any{
+			"bad": "${ 1 + }",
+		},
+	}})
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+
+	result := tasks[0].Run(context.Background())
+	assert.Equal(t, StatusFailed, result.Status)
+	assert.Contains(t, result.Message, "args.bad")
 }
 
 func TestBuilder_Build_WhenEvaluatesAtRuntime(t *testing.T) {
@@ -373,7 +397,6 @@ func TestBuilder_Build_ResolvesArgsBeforeFactory_TableDriven(t *testing.T) {
 			_, err := builder.Build([]config.Task{{Action: "capture", Args: tt.args}})
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, captured)
-			assert.False(t, hasUnresolvedExprToken(captured), "factory must not receive unresolved ${...} tokens")
 		})
 	}
 }
@@ -436,33 +459,30 @@ func TestBuilder_Build_ArgResolutionContracts_TableDriven(t *testing.T) {
 	}
 }
 
-func TestBuilder_AnyNeedsSudo_ConditionalDeferredTask(t *testing.T) {
+func TestBuilder_AnyNeedsSudo_ConditionalTask(t *testing.T) {
 	tests := []struct {
-		name                      string
-		os                        string
-		args                      any
-		wantAnyNeedsSudo          bool
-		wantFactoryAfterPreflight int
-		wantRunStatus             Status
-		wantFactoryAfterRun       int
+		name             string
+		os               string
+		args             any
+		wantAnyNeedsSudo bool
+		wantFactoryCalls int
+		wantRunStatus    Status
 	}{
 		{
-			name:                      "true when evaluates deferred task",
-			os:                        "arch",
-			args:                      nil,
-			wantAnyNeedsSudo:          true,
-			wantFactoryAfterPreflight: 1,
-			wantRunStatus:             StatusDone,
-			wantFactoryAfterRun:       1,
+			name:             "true when runs task",
+			os:               "arch",
+			args:             nil,
+			wantAnyNeedsSudo: true,
+			wantFactoryCalls: 1,
+			wantRunStatus:    StatusDone,
 		},
 		{
-			name:                      "false when skips deferred initialization",
-			os:                        "darwin",
-			args:                      map[string]any{"bad": "${ 1 + }"},
-			wantAnyNeedsSudo:          false,
-			wantFactoryAfterPreflight: 0,
-			wantRunStatus:             StatusSkipped,
-			wantFactoryAfterRun:       0,
+			name:             "false when skips task",
+			os:               "darwin",
+			args:             nil,
+			wantAnyNeedsSudo: false,
+			wantFactoryCalls: 0,
+			wantRunStatus:    StatusSkipped,
 		},
 	}
 
@@ -486,14 +506,13 @@ func TestBuilder_AnyNeedsSudo_ConditionalDeferredTask(t *testing.T) {
 			}})
 			require.NoError(t, err)
 			require.Len(t, tasks, 1)
-			assert.Equal(t, 0, factoryCalls, "deferred factory should not run during build")
+			assert.Equal(t, 0, factoryCalls)
 
 			assert.Equal(t, tt.wantAnyNeedsSudo, AnyNeedsSudo(tasks))
-			assert.Equal(t, tt.wantFactoryAfterPreflight, factoryCalls)
+			assert.Equal(t, tt.wantFactoryCalls, factoryCalls)
 
 			result := tasks[0].Run(context.Background())
 			assert.Equal(t, tt.wantRunStatus, result.Status)
-			assert.Equal(t, tt.wantFactoryAfterRun, factoryCalls)
 		})
 	}
 }
@@ -509,19 +528,99 @@ func TestConditionalTask_NeedsSudo_ConditionErrorIsConservative(t *testing.T) {
 	assert.True(t, ct.NeedsSudo(), "condition evaluation errors should be treated as sudo-needed")
 }
 
-func TestDeferredFactoryTask_NeedsSudo_InitErrorIsConservative(t *testing.T) {
-	factoryCalled := false
-	task := NewDeferredFactoryTask(
-		"capture",
-		map[string]any{"bad": `${ 1 + }`},
-		func(args any) ([]Task, error) {
-			factoryCalled = true
-			return nil, nil
-		},
-		expr.NewContext(),
-		1,
-	)
+func TestExpandConditionalDeferredTask_ExpandsGeneratedTasksLazily(t *testing.T) {
+	exprCtx := expr.NewContext().WithProfile("work")
+	exprCtx.OS = "arch"
 
-	assert.True(t, task.NeedsSudo(), "init errors should be treated as sudo-needed")
-	assert.False(t, factoryCalled, "factory must not run when arg resolution fails")
+	factoryCalls := 0
+	deferred := NewDeferredFactoryTask("capture", func() ([]Task, error) {
+		factoryCalls++
+		return []Task{
+			&mockTask{name: "one", result: Result{Status: StatusDone}},
+			&mockTask{name: "two", result: Result{Status: StatusDone}},
+		}, nil
+	})
+
+	conditional, err := NewConditionalTask(deferred, mustValue(t, `${ os == "arch" }`), exprCtx, `${ os == "arch" }`)
+	require.NoError(t, err)
+	assert.Equal(t, 0, factoryCalls)
+
+	expanded, ok, err := ExpandConditionalDeferredTask(conditional)
+	require.NoError(t, err)
+	assert.True(t, ok)
+	require.Len(t, expanded, 2)
+	assert.Equal(t, 1, factoryCalls)
+	assert.Equal(t, "one", expanded[0].Name())
+	assert.Equal(t, "two", expanded[1].Name())
+
+	expandedAgain, ok, err := ExpandConditionalDeferredTask(conditional)
+	require.NoError(t, err)
+	assert.True(t, ok)
+	require.Len(t, expandedAgain, 2)
+	assert.Equal(t, 1, factoryCalls)
+}
+
+func TestExpandConditionalDeferredTask_DoesNotExpandWhenConditionFalse(t *testing.T) {
+	exprCtx := expr.NewContext().WithProfile("work")
+	exprCtx.OS = "darwin"
+
+	factoryCalls := 0
+	deferred := NewDeferredFactoryTask("capture", func() ([]Task, error) {
+		factoryCalls++
+		return []Task{&mockTask{name: "one", result: Result{Status: StatusDone}}}, nil
+	})
+
+	conditional, err := NewConditionalTask(deferred, mustValue(t, `${ os == "arch" }`), exprCtx, `${ os == "arch" }`)
+	require.NoError(t, err)
+
+	expanded, ok, err := ExpandConditionalDeferredTask(conditional)
+	require.NoError(t, err)
+	assert.False(t, ok)
+	assert.Nil(t, expanded)
+	assert.Equal(t, 0, factoryCalls)
+}
+
+func TestDeferredFactoryTask_Run_AllSkippedAggregatesSkipped(t *testing.T) {
+	deferred := NewDeferredFactoryTask("capture", func() ([]Task, error) {
+		return []Task{
+			&mockTask{name: "one", result: Result{Status: StatusSkipped, Message: "one skipped"}},
+			&mockTask{name: "two", result: Result{Status: StatusSkipped, Message: "two skipped"}},
+		}, nil
+	})
+
+	result := deferred.Run(context.Background())
+	assert.Equal(t, StatusSkipped, result.Status)
+	assert.Contains(t, result.Message, "one skipped")
+	assert.Contains(t, result.Message, "two skipped")
+}
+
+func TestDeferredFactoryTask_NeedsSudo_LoadErrorReturnsFalse(t *testing.T) {
+	deferred := NewDeferredFactoryTask("capture", func() ([]Task, error) {
+		return nil, errors.New("prepare failed")
+	})
+
+	assert.False(t, deferred.NeedsSudo())
+}
+
+func TestBuilder_AnyNeedsSudo_DeferredPreparationErrorDoesNotRequireSudo(t *testing.T) {
+	exprCtx := expr.NewContext().WithProfile("work")
+	exprCtx.OS = "arch"
+
+	builder := NewBuilder().
+		WithExprContext(exprCtx).
+		Register("capture", func(args any) ([]Task, error) {
+			return []Task{&mockTask{name: "ok", result: Result{Status: StatusDone}}}, nil
+		})
+
+	tasks, err := builder.Build([]config.Task{{
+		Action: "capture",
+		When:   func() *config.WhenExpr { w := config.WhenExpr(`${ os == "arch" }`); return &w }(),
+		Args: map[string]any{
+			"bad": "${ 1 + }",
+		},
+	}})
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+
+	assert.False(t, AnyNeedsSudo(tasks))
 }

@@ -1,107 +1,91 @@
 package task
 
 import (
-	"booster/internal/expr"
 	"context"
-	"errors"
 	"fmt"
+	"strings"
+	"sync"
 )
 
 type DeferredFactoryTask struct {
-	action    string
-	args      any
-	factory   Factory
-	exprCtx   *expr.Context
-	taskIndex int
-
-	initialized bool
-	created     []Task
-	initErr     error
+	name      string
+	factory   func() ([]Task, error)
+	loadOnce  sync.Once
+	loaded    []Task
+	loadError error
 }
 
-func NewDeferredFactoryTask(action string, args any, factory Factory, exprCtx *expr.Context, taskIndex int) *DeferredFactoryTask {
-	return &DeferredFactoryTask{
-		action:    action,
-		args:      args,
-		factory:   factory,
-		exprCtx:   exprCtx,
-		taskIndex: taskIndex,
-	}
+func NewDeferredFactoryTask(name string, factory func() ([]Task, error)) *DeferredFactoryTask {
+	return &DeferredFactoryTask{name: name, factory: factory}
 }
 
 func (t *DeferredFactoryTask) Name() string {
-	if t.initialized && len(t.created) == 1 {
-		return t.created[0].Name()
+	if t.name != "" {
+		return t.name
 	}
-	return t.action
+	return "task"
 }
 
 func (t *DeferredFactoryTask) NeedsSudo() bool {
-	if !t.initialized {
-		t.init()
+	loaded, err := t.load()
+	if err != nil {
+		return false
 	}
-	if t.initErr != nil {
-		return true
-	}
-	return AnyNeedsSudo(t.created)
+	return AnyNeedsSudo(loaded)
 }
 
 func (t *DeferredFactoryTask) Run(ctx context.Context) Result {
-	t.init()
-	if t.initErr != nil {
-		return Result{Status: StatusFailed, Error: t.initErr, Message: t.initErr.Error()}
+	loaded, err := t.load()
+	if err != nil {
+		return Result{Status: StatusFailed, Error: err, Message: err.Error()}
 	}
 
-	if len(t.created) == 0 {
-		return Result{Status: StatusDone}
+	if len(loaded) == 0 {
+		return Result{Status: StatusDone, Message: "no tasks generated"}
 	}
 
-	if len(t.created) == 1 {
-		return t.created[0].Run(ctx)
-	}
-
-	var doneCount int
-	for i, created := range t.created {
-		result := created.Run(ctx)
-		switch result.Status {
-		case StatusFailed:
-			if result.Message == "" {
-				result.Message = fmt.Sprintf("generated task %d for action %q failed", i+1, t.action)
-			}
+	var messages []string
+	anyDone := false
+	allSkipped := len(loaded) > 0
+	for _, inner := range loaded {
+		result := inner.Run(ctx)
+		if result.Status == StatusFailed {
 			return result
-		case StatusDone:
-			doneCount++
+		}
+		if result.Status == StatusDone {
+			anyDone = true
+		}
+		if result.Status != StatusSkipped {
+			allSkipped = false
+		}
+		if result.Message != "" {
+			messages = append(messages, result.Message)
 		}
 	}
 
-	if doneCount == 0 {
-		return Result{Status: StatusSkipped, Message: fmt.Sprintf("all generated tasks skipped for action %q", t.action)}
+	finalStatus := StatusDone
+	if !anyDone && allSkipped {
+		finalStatus = StatusSkipped
 	}
 
-	return Result{Status: StatusDone, Message: fmt.Sprintf("executed %d generated task(s) for action %q", doneCount, t.action)}
+	if len(messages) == 0 {
+		return Result{Status: finalStatus}
+	}
+
+	return Result{Status: finalStatus, Message: strings.Join(messages, "; ")}
 }
 
-func (t *DeferredFactoryTask) init() {
-	if t.initialized {
-		return
-	}
-	t.initialized = true
-
-	resolvedArgs, err := resolveTaskArgs(t.args, t.exprCtx)
-	if err != nil {
-		var argErr *argResolveError
-		if errors.As(err, &argErr) {
-			t.initErr = fmt.Errorf("task %d (%s): args%s: %v", t.taskIndex, t.action, argErr.path, argErr.err)
-			return
+func (t *DeferredFactoryTask) load() ([]Task, error) {
+	t.loadOnce.Do(func() {
+		t.loaded, t.loadError = t.factory()
+		if t.loadError != nil {
+			t.loadError = fmt.Errorf("prepare task %q: %w", t.Name(), t.loadError)
 		}
-		t.initErr = fmt.Errorf("task %d (%s): args: %w", t.taskIndex, t.action, err)
-		return
+	})
+
+	if t.loadError != nil {
+		return nil, t.loadError
 	}
 
-	created, err := t.factory(resolvedArgs)
-	if err != nil {
-		t.initErr = fmt.Errorf("task %d (%s): %w", t.taskIndex, t.action, err)
-		return
-	}
-	t.created = created
+	return t.loaded, nil
 }

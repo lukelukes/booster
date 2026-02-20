@@ -2,7 +2,6 @@ package integration
 
 import (
 	"booster/internal/config"
-	"booster/internal/executor"
 	"booster/internal/expr"
 	"booster/internal/task"
 	"booster/internal/tui"
@@ -13,10 +12,33 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func runTasks(t *testing.T, tasks []task.Task) {
+	t.Helper()
+	ctx := context.Background()
+	for i, taskRun := range tasks {
+		result := taskRun.Run(ctx)
+		if result.Status == task.StatusFailed {
+			t.Fatalf("task %d failed: %v", i+1, result.Error)
+		}
+	}
+}
+
+func runNextTask(t *testing.T, tasks []task.Task, index int) (task.Result, bool) {
+	t.Helper()
+	if index >= len(tasks) {
+		return task.Result{}, false
+	}
+	start := time.Now()
+	result := tasks[index].Run(context.Background())
+	result.Duration = time.Since(start)
+	return result, true
+}
 
 func TestDirCreate_ExecutesForReal(t *testing.T) {
 	dir := t.TempDir()
@@ -41,8 +63,7 @@ tasks:
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 
-	exec := executor.New(tasks)
-	result, ok := exec.RunNext(context.Background())
+	result, ok := runNextTask(t, tasks, 0)
 
 	require.True(t, ok, "should have a task to run")
 	assert.Equal(t, task.StatusDone, result.Status)
@@ -75,8 +96,7 @@ tasks:
 	tasks1, err := builder1.Build(cfg.Tasks)
 	require.NoError(t, err)
 
-	exec1 := executor.New(tasks1)
-	result1, ok1 := exec1.RunNext(context.Background())
+	result1, ok1 := runNextTask(t, tasks1, 0)
 	require.True(t, ok1)
 	assert.Equal(t, task.StatusDone, result1.Status)
 
@@ -84,8 +104,7 @@ tasks:
 	tasks2, err := builder2.Build(cfg.Tasks)
 	require.NoError(t, err)
 
-	exec2 := executor.New(tasks2)
-	result2, ok2 := exec2.RunNext(context.Background())
+	result2, ok2 := runNextTask(t, tasks2, 0)
 	require.True(t, ok2)
 	assert.Equal(t, task.StatusSkipped, result2.Status)
 }
@@ -118,8 +137,7 @@ tasks:
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 
-	exec := executor.New(tasks)
-	result, ok := exec.RunNext(context.Background())
+	result, ok := runNextTask(t, tasks, 0)
 
 	require.True(t, ok)
 	assert.Equal(t, task.StatusDone, result.Status)
@@ -162,11 +180,8 @@ tasks:
 	require.NoError(t, err)
 	require.Len(t, tasks, 3, "should create 3 tasks for 3 directories")
 
-	exec := executor.New(tasks)
-	ctx := context.Background()
-
 	for i := range 3 {
-		result, ok := exec.RunNext(ctx)
+		result, ok := runNextTask(t, tasks, i)
 		require.True(t, ok, "task %d should exist", i+1)
 		assert.Equal(t, task.StatusDone, result.Status, "task %d should succeed", i+1)
 	}
@@ -208,14 +223,11 @@ tasks:
 	require.NoError(t, err)
 	require.Len(t, tasks, 2)
 
-	exec := executor.New(tasks)
-	ctx := context.Background()
-
-	result1, ok1 := exec.RunNext(ctx)
+	result1, ok1 := runNextTask(t, tasks, 0)
 	require.True(t, ok1)
 	assert.Equal(t, task.StatusDone, result1.Status, "arch task should execute")
 
-	result2, ok2 := exec.RunNext(ctx)
+	result2, ok2 := runNextTask(t, tasks, 1)
 	require.True(t, ok2)
 	assert.Equal(t, task.StatusSkipped, result2.Status, "darwin task should be skipped")
 
@@ -378,13 +390,7 @@ tasks:
 			require.NoError(t, err)
 			require.NotEmpty(t, tasks)
 
-			exec := executor.New(tasks)
-			ctx := context.Background()
-			for range tasks {
-				result, ok := exec.RunNext(ctx)
-				require.True(t, ok)
-				require.NotEqual(t, task.StatusFailed, result.Status, result.Error)
-			}
+			runTasks(t, tasks)
 
 			tt.verify(t, dir)
 		})

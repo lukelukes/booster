@@ -170,14 +170,6 @@ func (v *Value) Resolve(ctx *Context) (any, error) {
 	return sb.String(), nil
 }
 
-func (v *Value) MustResolve(ctx *Context) any {
-	result, err := v.Resolve(ctx)
-	if err != nil {
-		panic(err)
-	}
-	return result
-}
-
 func ResolveCondition(when *Value, ctx *Context) (bool, error) {
 	if when == nil {
 		return true, nil

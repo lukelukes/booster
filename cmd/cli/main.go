@@ -61,24 +61,37 @@ func (c *RunCmd) Run(cli *CLI) error {
 
 	configDir := filepath.Dir(cli.Config)
 
+	var runner cmdexec.Runner
+	var logPath string
+	if c.DryRun {
+		runner = cmdexec.DefaultRunner()
+	} else {
+		logFile, err := os.CreateTemp("", "booster-*.log")
+		if err != nil {
+			return fmt.Errorf("create log file: %w", err)
+		}
+		logPath = logFile.Name()
+		defer logFile.Close()
+		runner = &cmdexec.RealRunner{LogWriter: logFile}
+	}
+
 	builder := task.DefaultBuilder(exprCtx)
 	builder.Register("template.render", task.NewTemplateRenderFactory(task.TemplateRenderConfig{
 		Vars:    vars,
 		OS:      sysOS,
 		Profile: profile,
 	}))
-	builder.Register("pkg-manager.install", task.NewPkgManagerInstallFactory(nil))
+	builder.Register("pkg-manager.install", task.NewPkgManagerInstallFactory(runner))
 	builder.Register("pkg.install", task.NewPkgInstallFactory(task.PkgInstallConfig{
-		OS: sysOS,
+		OS:     sysOS,
+		Runner: runner,
 	}))
-	builder.Register("mise.use", task.NewMiseUseFactory(task.MiseUseConfig{}))
-	builder.Register("git.config", task.NewGitConfig(
-		cmdexec.DefaultRunner(),
-		tui.NewHuhPrompter(),
-	))
+	builder.Register("mise.use", task.NewMiseUseFactory(task.MiseUseConfig{Runner: runner}))
+	builder.Register("git.config", task.NewGitConfig(runner, tui.NewHuhPrompter()))
 	builder.Register("set.darwin.defaults", task.NewDarwinDefaultsFactory(task.DarwinDefaultsConfig{
 		OS:        sysOS,
 		ConfigDir: configDir,
+		Runner:    runner,
 	}))
 
 	tasks, err := builder.Build(cfg.Tasks)
@@ -105,8 +118,8 @@ func (c *RunCmd) Run(cli *CLI) error {
 		}
 	}
 
-	model := tui.New(tasks)
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	model := tui.New(tasks, logPath)
+	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)

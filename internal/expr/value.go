@@ -162,7 +162,7 @@ func (v *Value) Resolve(ctx *Context) (any, error) {
 			if err != nil {
 				return nil, err
 			}
-			sb.WriteString(fmt.Sprint(result))
+			fmt.Fprint(&sb, result)
 		} else {
 			sb.WriteString(p.literal)
 		}

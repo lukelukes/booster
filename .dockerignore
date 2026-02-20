@@ -4,7 +4,6 @@ dist/
 .github/
 .cursor/
 .claude/
-testdata/
 docs/
 plans/
 todos/

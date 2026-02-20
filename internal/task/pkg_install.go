@@ -216,14 +216,12 @@ func (t *PkgInstall) Run(ctx context.Context) Result {
 		}
 	}
 
-	queryCtx := context.Background()
-
-	toInstall, err := t.findMissingPackages(queryCtx)
+	toInstall, err := t.findMissingPackages(ctx)
 	if err != nil {
 		return Result{Status: StatusFailed, Error: err}
 	}
 
-	casksToInstall, err := t.findMissingCasks(queryCtx)
+	casksToInstall, err := t.findMissingCasks(ctx)
 	if err != nil {
 		return Result{Status: StatusFailed, Error: err}
 	}

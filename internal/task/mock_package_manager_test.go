@@ -12,15 +12,13 @@ type mockPackageManager struct {
 	name           string
 	installCalls   [][]string
 	caskCalls      [][]string
-	supportsCasks  bool
 }
 
-func newMockManager(name string, supportsCasks bool) *mockPackageManager {
+func newMockManager(name string) *mockPackageManager {
 	return &mockPackageManager{
 		name:           name,
 		installed:      make(map[string]bool),
 		casksInstalled: make(map[string]bool),
-		supportsCasks:  supportsCasks,
 	}
 }
 
@@ -69,5 +67,3 @@ func (m *mockPackageManager) InstallCasks(ctx context.Context, casks []string) (
 	}
 	return "mock cask output", nil
 }
-
-func (m *mockPackageManager) SupportsCasks() bool { return m.supportsCasks }

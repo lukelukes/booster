@@ -4,8 +4,10 @@ import (
 	"booster/internal/task"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -70,10 +72,6 @@ func (m Model) done() bool {
 	return m.aborted || m.current >= len(m.tasks)
 }
 
-func (m Model) stopped() bool {
-	return m.done()
-}
-
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -89,7 +87,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.finalizeElapsed()
 			return m, tea.Quit
 		}
-		if m.stopped() && msg.String() == "enter" {
+		if m.done() && msg.String() == "enter" {
 			return m, tea.Quit
 		}
 
@@ -106,14 +104,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		idx := m.current
 
 		expanded, ok, err := task.ExpandConditionalDeferredTask(m.tasks[idx])
-		if err == nil && ok {
-			m.tasks = append(m.tasks[:idx], append(expanded, m.tasks[idx+1:]...)...)
-
+		if err != nil {
+			m.results[idx] = task.Result{Status: task.StatusFailed, Error: err, Message: err.Error()}
+			m.current++
+			m.aborted = true
+			m.finalizeElapsed()
+			return m, nil
+		}
+		if ok {
 			replacement := make([]task.Result, len(expanded))
 			for i := range replacement {
 				replacement[i] = task.Result{Status: task.StatusPending}
 			}
-			m.results = append(m.results[:idx], append(replacement, m.results[idx+1:]...)...)
+			m.tasks = slices.Replace(m.tasks, idx, idx+1, expanded...)
+			m.results = slices.Replace(m.results, idx, idx+1, replacement...)
 
 			if len(expanded) == 0 {
 				if m.done() {
@@ -157,10 +161,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
-		if !m.startTime.IsZero() && !m.stopped() {
+		if !m.startTime.IsZero() && !m.done() {
 			m.elapsed = time.Since(m.startTime)
 		}
-		if !m.stopped() {
+		if !m.done() {
 			return m, tickEvery(time.Second)
 		}
 		return m, nil
@@ -201,20 +205,6 @@ func (m Model) View() string {
 	}
 	b.WriteString("\n")
 
-	done := 0
-	skipped := 0
-	failed := 0
-	for _, r := range m.results {
-		switch r.Status {
-		case task.StatusDone:
-			done++
-		case task.StatusSkipped:
-			skipped++
-		case task.StatusFailed:
-			failed++
-		}
-	}
-
 	for i, t := range m.tasks {
 		r := m.results[i]
 		name := truncate(t.Name(), m.width-20)
@@ -248,7 +238,7 @@ func (m Model) View() string {
 				b.WriteString(leaderStyle.Render(dots(name, m.width)))
 				b.WriteString(" ")
 				elapsed := m.elapsed
-				if !m.startTime.IsZero() && !m.stopped() {
+				if !m.startTime.IsZero() && !m.done() {
 					elapsed = time.Since(m.startTime)
 				}
 				b.WriteString(dimStyle.Render(formatDuration(elapsed)))
@@ -274,19 +264,17 @@ func dots(name string, width int) string {
 
 func truncate(s string, limit int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
-	if limit <= 0 || len(s) <= limit {
+	if limit <= 0 || utf8.RuneCountInString(s) <= limit {
 		return s
 	}
+	runes := []rune(s)
 	if limit <= 3 {
-		return s[:limit]
+		return string(runes[:limit])
 	}
-	return s[:limit-3] + "..."
+	return string(runes[:limit-3]) + "..."
 }
 
 func formatDuration(d time.Duration) string {
-	if d < time.Second {
-		return fmt.Sprintf("%.1fs", d.Seconds())
-	}
 	return fmt.Sprintf("%.1fs", d.Seconds())
 }
 
@@ -306,11 +294,11 @@ func footer(m Model) string {
 	}
 	total := len(m.tasks)
 	elapsed := m.elapsed
-	if !m.startTime.IsZero() && !m.stopped() {
+	if !m.startTime.IsZero() && !m.done() {
 		elapsed = time.Since(m.startTime)
 	}
 
-	if m.stopped() {
+	if m.done() {
 		completed := done + skipped + failed
 		if failed > 0 {
 			return fmt.Sprintf("  %d/%d · %d failed · %s", completed, total, failed, formatDuration(elapsed))

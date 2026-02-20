@@ -11,7 +11,7 @@ import (
 )
 
 func TestPkgInstall_SkipsWhenAllInstalled(t *testing.T) {
-	manager := newMockManager("paru", false)
+	manager := newMockManager("paru")
 	manager.installed["git"] = true
 	manager.installed["curl"] = true
 
@@ -29,7 +29,7 @@ func TestPkgInstall_SkipsWhenAllInstalled(t *testing.T) {
 }
 
 func TestPkgInstall_InstallsMissingPackages(t *testing.T) {
-	manager := newMockManager("paru", false)
+	manager := newMockManager("paru")
 	manager.installed["git"] = true
 
 	task := &PkgInstall{
@@ -50,7 +50,7 @@ func TestPkgInstall_InstallsMissingPackages(t *testing.T) {
 }
 
 func TestPkgInstall_InstallsAllWhenNoneInstalled(t *testing.T) {
-	manager := newMockManager("paru", false)
+	manager := newMockManager("paru")
 
 	task := &PkgInstall{
 		Packages: []string{"git", "curl"},
@@ -66,7 +66,7 @@ func TestPkgInstall_InstallsAllWhenNoneInstalled(t *testing.T) {
 }
 
 func TestPkgInstall_FailsOnInstallError(t *testing.T) {
-	manager := newMockManager("paru", false)
+	manager := newMockManager("paru")
 	manager.installErr = errors.New("network error")
 
 	task := &PkgInstall{
@@ -84,7 +84,7 @@ func TestPkgInstall_FailsOnInstallError(t *testing.T) {
 }
 
 func TestPkgInstall_CapturesOutputOnSuccess(t *testing.T) {
-	manager := newMockManager("paru", false)
+	manager := newMockManager("paru")
 
 	task := &PkgInstall{
 		Packages: []string{"git"},
@@ -99,7 +99,7 @@ func TestPkgInstall_CapturesOutputOnSuccess(t *testing.T) {
 }
 
 func TestPkgInstall_WarnsOnCasksWithNonDarwin(t *testing.T) {
-	manager := newMockManager("paru", false)
+	manager := newMockManager("paru")
 
 	task := &PkgInstall{
 		Packages: []string{"git"},
@@ -116,7 +116,7 @@ func TestPkgInstall_WarnsOnCasksWithNonDarwin(t *testing.T) {
 }
 
 func TestPkgInstall_InstallsCasksOnDarwin(t *testing.T) {
-	manager := newMockManager("homebrew", true)
+	manager := newMockManager("homebrew")
 
 	task := &PkgInstall{
 		Packages: []string{"git"},
@@ -136,7 +136,7 @@ func TestPkgInstall_InstallsCasksOnDarwin(t *testing.T) {
 }
 
 func TestPkgInstall_SkipsCasksAlreadyInstalled(t *testing.T) {
-	manager := newMockManager("homebrew", true)
+	manager := newMockManager("homebrew")
 	manager.installed["git"] = true
 	manager.casksInstalled["firefox"] = true
 
@@ -155,7 +155,7 @@ func TestPkgInstall_SkipsCasksAlreadyInstalled(t *testing.T) {
 }
 
 func TestPkgInstall_Idempotency(t *testing.T) {
-	manager := newMockManager("paru", false)
+	manager := newMockManager("paru")
 
 	task := &PkgInstall{
 		Packages: []string{"git", "curl"},
@@ -428,7 +428,7 @@ func assertPkgInstallFactoryName(t *testing.T, args any, cfg PkgInstallConfig, c
 
 func TestNewPkgInstallFactory_SimpleFormat(t *testing.T) {
 	args := []any{"git", "curl", "ripgrep"}
-	manager := newMockManager("paru", false)
+	manager := newMockManager("paru")
 
 	assertPkgInstallFactoryName(t, args, PkgInstallConfig{
 		Manager: manager,
@@ -445,7 +445,7 @@ func TestNewPkgInstallFactory_StructuredFormat(t *testing.T) {
 			"casks": []any{"firefox", "vscode"},
 		},
 	}
-	manager := newMockManager("homebrew", true)
+	manager := newMockManager("homebrew")
 
 	assertPkgInstallFactoryName(t, args, PkgInstallConfig{
 		Manager: manager,
@@ -460,7 +460,7 @@ func TestNewPkgInstallFactory_MixedFormat(t *testing.T) {
 			"casks":    []any{"firefox"},
 		},
 	}
-	manager := newMockManager("homebrew", true)
+	manager := newMockManager("homebrew")
 
 	assertPkgInstallFactoryName(t, args, PkgInstallConfig{
 		Manager: manager,
@@ -581,7 +581,7 @@ func TestNewPkgInstallFactory_ErrorIndices(t *testing.T) {
 
 func TestNewPkgInstallFactory_SetsOSFromConfig(t *testing.T) {
 	args := []any{"git"}
-	manager := newMockManager("paru", false)
+	manager := newMockManager("paru")
 
 	factory := NewPkgInstallFactory(PkgInstallConfig{
 		Manager: manager,

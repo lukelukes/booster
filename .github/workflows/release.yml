@@ -32,6 +32,8 @@ jobs:
 
       - name: Lint
         uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 #v9.2.0
+        with:
+          version: v2.10.1
 
       - name: Semantic Release
         uses: go-semantic-release/action@2e9dc4247a6004f8377781bef4cb9dad273a741f #v1.24.1

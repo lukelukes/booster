@@ -8,7 +8,6 @@ BUILD_DIR := out
 BINARY := $(BUILD_DIR)/booster
 PKG := ./cmd/cli
 COVER_OUT := $(BUILD_DIR)/coverage.out
-GOBIN := $(shell go env GOPATH)/bin
 
 # Version info for ldflags
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -125,7 +124,7 @@ vet: ## Run go vet
 
 .PHONY: vuln
 vuln: ## Run govulncheck ./... (Go vulnerability scanner)
-	@$(GOBIN)/govulncheck ./...
+	@govulncheck ./...
 
 .PHONY: tidy
 tidy: ## Run go mod tidy -v

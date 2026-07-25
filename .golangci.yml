@@ -9,6 +9,7 @@ linters:
   default: none
   enable:
     - bidichk
+    - depguard
     - dupl
     - errcheck
     - forbidigo
@@ -30,6 +31,29 @@ linters:
     - usetesting
     - wastedassign
   settings:
+    depguard:
+      rules:
+        logic-must-not-import-display:
+          files:
+            - '**/internal/run/**'
+            - '**/internal/action/**'
+          deny:
+            - pkg: booster/internal/ui
+              desc: business logic must not import presentation; emit model.Event instead
+        display-must-not-import-logic:
+          files:
+            - '**/internal/ui/**'
+          deny:
+            - pkg: booster/internal/run
+              desc: presentation must not import business logic; render model.Event instead
+            - pkg: booster/internal/action
+              desc: presentation must not import business logic; render model.Event instead
+        model-must-not-import-project:
+          files:
+            - '**/internal/model/**'
+          deny:
+            - pkg: booster/internal
+              desc: model is the shared vocabulary and must depend on nothing in the project
     nolintlint:
       allow-unused: false
       require-explanation: true

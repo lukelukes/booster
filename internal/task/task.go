@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Status int
@@ -121,7 +123,12 @@ func (b *Builder) Build(tasks []config.Task) ([]Task, error) {
 			}
 
 			deferred := NewDeferredFactoryTask(ct.Action, func() ([]Task, error) {
-				resolvedArgs, err := resolveTaskArgs(ct.Args, b.exprCtx)
+				rawArgs, err := decodeArgs(ct.Args)
+				if err != nil {
+					return nil, fmt.Errorf("args: %w", err)
+				}
+
+				resolvedArgs, err := resolveTaskArgs(rawArgs, b.exprCtx)
 				if err != nil {
 					if argErr, ok := errors.AsType[*argResolveError](err); ok {
 						return nil, fmt.Errorf("args%s: %v", argErr.path, argErr.err)
@@ -144,7 +151,12 @@ func (b *Builder) Build(tasks []config.Task) ([]Task, error) {
 			continue
 		}
 
-		resolvedArgs, err := resolveTaskArgs(ct.Args, b.exprCtx)
+		rawArgs, err := decodeArgs(ct.Args)
+		if err != nil {
+			return nil, fmt.Errorf("task %d (%s): args: %w", i+1, ct.Action, err)
+		}
+
+		resolvedArgs, err := resolveTaskArgs(rawArgs, b.exprCtx)
 		if err != nil {
 			if argErr, ok := errors.AsType[*argResolveError](err); ok {
 				return nil, fmt.Errorf("task %d (%s): args%s: %v", i+1, ct.Action, argErr.path, argErr.err)
@@ -161,6 +173,18 @@ func (b *Builder) Build(tasks []config.Task) ([]Task, error) {
 	}
 
 	return result, nil
+}
+
+func decodeArgs(node yaml.Node) (any, error) {
+	if node.IsZero() {
+		return nil, nil
+	}
+
+	var raw any
+	if err := node.Decode(&raw); err != nil {
+		return nil, err
+	}
+	return raw, nil
 }
 
 func DefaultBuilder(ctx *expr.Context) *Builder {

@@ -23,7 +23,7 @@ type VariableDef struct {
 }
 
 type Task struct {
-	Args   any       `yaml:"args"`
+	Args   yaml.Node `yaml:"args"`
 	When   *WhenExpr `yaml:"when,omitempty"`
 	Action string    `yaml:"action"`
 }

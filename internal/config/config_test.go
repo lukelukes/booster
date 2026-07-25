@@ -451,3 +451,68 @@ tasks: []
 		})
 	}
 }
+
+func TestLoad_TaskArgsKeepRawYAML(t *testing.T) {
+	tests := []struct {
+		want    any
+		name    string
+		content string
+	}{
+		{
+			name: "sequence of scalars",
+			content: `version: "1"
+tasks:
+  - action: dir.create
+    args:
+      - ~/.config
+      - ~/.local/bin
+`,
+			want: []any{"~/.config", "~/.local/bin"},
+		},
+		{
+			name: "mapping",
+			content: `version: "1"
+tasks:
+  - action: git.config
+    args:
+      key: init.defaultBranch
+      value: main
+`,
+			want: map[string]any{"key": "init.defaultBranch", "value": "main"},
+		},
+		{
+			name: "expressions are not evaluated at load time",
+			content: `version: "1"
+tasks:
+  - action: dir.create
+    args:
+      - ${ home }/.config
+`,
+			want: []any{"${ home }/.config"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := loadConfigFromContent(t, tt.content)
+			require.NoError(t, err)
+			require.Len(t, cfg.Tasks, 1)
+
+			var decoded any
+			require.NoError(t, cfg.Tasks[0].Args.Decode(&decoded))
+
+			assert.Equal(t, tt.want, decoded)
+		})
+	}
+}
+
+func TestLoad_TaskWithoutArgs(t *testing.T) {
+	cfg, err := loadConfigFromContent(t, `version: "1"
+tasks:
+  - action: mise.use
+`)
+
+	require.NoError(t, err)
+	require.Len(t, cfg.Tasks, 1)
+	assert.True(t, cfg.Tasks[0].Args.IsZero())
+}

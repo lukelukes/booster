@@ -9,7 +9,25 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
+
+func argsNode(t *testing.T, v any) yaml.Node {
+	t.Helper()
+
+	if v == nil {
+		return yaml.Node{}
+	}
+
+	data, err := yaml.Marshal(v)
+	require.NoError(t, err)
+
+	var doc yaml.Node
+	require.NoError(t, yaml.Unmarshal(data, &doc))
+	require.Len(t, doc.Content, 1)
+
+	return *doc.Content[0]
+}
 
 func TestBuilder_Register(t *testing.T) {
 	called := false
@@ -18,7 +36,7 @@ func TestBuilder_Register(t *testing.T) {
 		return nil, nil
 	})
 
-	tasks, err := builder.Build([]config.Task{{Action: "test.action", Args: nil}})
+	tasks, err := builder.Build([]config.Task{{Action: "test.action"}})
 	require.NoError(t, err)
 	assert.Nil(t, tasks)
 
@@ -31,7 +49,7 @@ func TestBuilder_Build_KnownAction(t *testing.T) {
 	tasks, err := builder.Build([]config.Task{
 		{
 			Action: "dir.create",
-			Args:   []any{"~/test-dir"},
+			Args:   argsNode(t, []any{"~/test-dir"}),
 		},
 	})
 
@@ -44,7 +62,7 @@ func TestBuilder_Build_UnknownAction(t *testing.T) {
 	builder := NewBuilder()
 
 	_, err := builder.Build([]config.Task{
-		{Action: "unknown.action", Args: nil},
+		{Action: "unknown.action"},
 	})
 
 	require.Error(t, err)
@@ -58,7 +76,7 @@ func TestBuilder_Build_FactoryError(t *testing.T) {
 	})
 
 	_, err := builder.Build([]config.Task{
-		{Action: "test.failing", Args: nil},
+		{Action: "test.failing"},
 	})
 
 	require.Error(t, err)
@@ -69,8 +87,8 @@ func TestBuilder_Build_MultipleTasks(t *testing.T) {
 	builder := NewBuilder().Register("dir.create", NewDirCreate)
 
 	tasks, err := builder.Build([]config.Task{
-		{Action: "dir.create", Args: []any{"~/dir1"}},
-		{Action: "dir.create", Args: []any{"~/dir2"}},
+		{Action: "dir.create", Args: argsNode(t, []any{"~/dir1"})},
+		{Action: "dir.create", Args: argsNode(t, []any{"~/dir2"})},
 	})
 
 	require.NoError(t, err)
@@ -92,7 +110,7 @@ func TestBuilder_Build_FactoryReturnsMultipleTasks(t *testing.T) {
 	tasks, err := builder.Build([]config.Task{
 		{
 			Action: "dir.create",
-			Args:   []any{"~/a", "~/b", "~/c"},
+			Args:   argsNode(t, []any{"~/a", "~/b", "~/c"}),
 		},
 	})
 
@@ -104,8 +122,8 @@ func TestBuilder_Build_ErrorIncludesTaskIndex(t *testing.T) {
 	builder := NewBuilder().Register("dir.create", NewDirCreate)
 
 	_, err := builder.Build([]config.Task{
-		{Action: "dir.create", Args: []any{"~/valid"}},
-		{Action: "nonexistent", Args: nil},
+		{Action: "dir.create", Args: argsNode(t, []any{"~/valid"})},
+		{Action: "nonexistent"},
 	})
 
 	require.Error(t, err)
@@ -118,7 +136,7 @@ func TestBuilder_Build_ErrorIndex_FirstTask(t *testing.T) {
 	})
 
 	_, err := builder.Build([]config.Task{
-		{Action: "failing", Args: nil},
+		{Action: "failing"},
 	})
 
 	require.Error(t, err)
@@ -136,9 +154,9 @@ func TestBuilder_Build_ErrorIndex_ThirdTask(t *testing.T) {
 		})
 
 	_, err := builder.Build([]config.Task{
-		{Action: "ok", Args: nil},
-		{Action: "ok", Args: nil},
-		{Action: "failing", Args: nil},
+		{Action: "ok"},
+		{Action: "ok"},
+		{Action: "failing"},
 	})
 
 	require.Error(t, err)
@@ -151,7 +169,7 @@ func TestDefaultBuilder_RegistersAllTasks(t *testing.T) {
 	builder := DefaultBuilder(ctx)
 
 	tasks, err := builder.Build([]config.Task{
-		{Action: "dir.create", Args: []any{"~/test"}},
+		{Action: "dir.create", Args: argsNode(t, []any{"~/test"})},
 	})
 
 	require.NoError(t, err)
@@ -198,7 +216,7 @@ func TestBuilder_Build_WithCondition(t *testing.T) {
 			tasks, err := builder.Build([]config.Task{{
 				Action: "dir.create",
 				When:   func() *config.WhenExpr { w := config.WhenExpr(tt.whenExpr); return &w }(),
-				Args:   []any{"~/test"},
+				Args:   argsNode(t, []any{"~/test"}),
 			}})
 
 			require.NoError(t, err)
@@ -223,7 +241,7 @@ func TestBuilder_Build_WithoutCondition_NotWrapped(t *testing.T) {
 	tasks, err := builder.Build([]config.Task{
 		{
 			Action: "dir.create",
-			Args:   []any{"~/test-no-condition"},
+			Args:   argsNode(t, []any{"~/test-no-condition"}),
 		},
 	})
 
@@ -245,7 +263,7 @@ func TestBuilder_Build_InvalidConditionExpression(t *testing.T) {
 		{
 			Action: "dir.create",
 			When:   func() *config.WhenExpr { w := config.WhenExpr(`${ 1 + }`); return &w }(),
-			Args:   []any{"~/test"},
+			Args:   argsNode(t, []any{"~/test"}),
 		},
 	})
 
@@ -268,9 +286,7 @@ func TestBuilder_Build_ConditionalWithInvalidArgsDoesNotFailBuildWhenConditionFa
 	tasks, err := builder.Build([]config.Task{{
 		Action: "capture",
 		When:   func() *config.WhenExpr { w := config.WhenExpr(`${ os == "arch" }`); return &w }(),
-		Args: map[string]any{
-			"bad": "${ 1 + }",
-		},
+		Args:   argsNode(t, map[string]any{"bad": "${ 1 + }"}),
 	}})
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
@@ -294,9 +310,7 @@ func TestBuilder_Build_ConditionalWithInvalidArgsFailsAtRuntimeWhenConditionTrue
 	tasks, err := builder.Build([]config.Task{{
 		Action: "capture",
 		When:   func() *config.WhenExpr { w := config.WhenExpr(`${ os == "arch" }`); return &w }(),
-		Args: map[string]any{
-			"bad": "${ 1 + }",
-		},
+		Args:   argsNode(t, map[string]any{"bad": "${ 1 + }"}),
 	}})
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
@@ -320,7 +334,6 @@ func TestBuilder_Build_WhenEvaluatesAtRuntime(t *testing.T) {
 	tasks, err := builder.Build([]config.Task{{
 		Action: "capture",
 		When:   func() *config.WhenExpr { w := config.WhenExpr(`${ os == "arch" }`); return &w }(),
-		Args:   nil,
 	}})
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
@@ -342,7 +355,6 @@ func TestBuilder_Build_UnknownActionErrorsEvenWhenConditionFalse(t *testing.T) {
 	_, err := builder.Build([]config.Task{{
 		Action: "unknown.action",
 		When:   func() *config.WhenExpr { w := config.WhenExpr(`${ os == "arch" }`); return &w }(),
-		Args:   nil,
 	}})
 
 	require.Error(t, err)
@@ -394,7 +406,7 @@ func TestBuilder_Build_ResolvesArgsBeforeFactory_TableDriven(t *testing.T) {
 					return nil, nil
 				})
 
-			_, err := builder.Build([]config.Task{{Action: "capture", Args: tt.args}})
+			_, err := builder.Build([]config.Task{{Action: "capture", Args: argsNode(t, tt.args)}})
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, captured)
 		})
@@ -413,7 +425,7 @@ func TestBuilder_Build_ArgResolutionContracts_TableDriven(t *testing.T) {
 			builder: NewBuilder().Register("dir.create", NewDirCreate),
 			task: config.Task{
 				Action: "dir.create",
-				Args:   []any{"~/plain-dir"},
+				Args:   argsNode(t, []any{"~/plain-dir"}),
 			},
 		},
 		{
@@ -421,7 +433,7 @@ func TestBuilder_Build_ArgResolutionContracts_TableDriven(t *testing.T) {
 			builder: NewBuilder().Register("dir.create", NewDirCreate),
 			task: config.Task{
 				Action: "dir.create",
-				Args:   []any{"${ home }/expr-dir"},
+				Args:   argsNode(t, []any{"${ home }/expr-dir"}),
 			},
 			wantErr: "task 1 (dir.create): args[0]: expression context is required",
 		},
@@ -434,11 +446,11 @@ func TestBuilder_Build_ArgResolutionContracts_TableDriven(t *testing.T) {
 				}),
 			task: config.Task{
 				Action: "capture",
-				Args: map[string]any{
+				Args: argsNode(t, map[string]any{
 					"items": []any{
 						map[string]any{"name": "${ 1 + }"},
 					},
-				},
+				}),
 			},
 			wantErr: "task 1 (capture): args.items[0].name: invalid expression",
 		},
@@ -502,7 +514,7 @@ func TestBuilder_AnyNeedsSudo_ConditionalTask(t *testing.T) {
 			tasks, err := builder.Build([]config.Task{{
 				Action: "capture",
 				When:   func() *config.WhenExpr { w := config.WhenExpr(`${ os == "arch" }`); return &w }(),
-				Args:   tt.args,
+				Args:   argsNode(t, tt.args),
 			}})
 			require.NoError(t, err)
 			require.Len(t, tasks, 1)
@@ -615,9 +627,7 @@ func TestBuilder_AnyNeedsSudo_DeferredPreparationErrorDoesNotRequireSudo(t *test
 	tasks, err := builder.Build([]config.Task{{
 		Action: "capture",
 		When:   func() *config.WhenExpr { w := config.WhenExpr(`${ os == "arch" }`); return &w }(),
-		Args: map[string]any{
-			"bad": "${ 1 + }",
-		},
+		Args:   argsNode(t, map[string]any{"bad": "${ 1 + }"}),
 	}})
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)

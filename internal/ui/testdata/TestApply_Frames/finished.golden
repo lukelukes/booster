@@ -1,0 +1,10 @@
+ booster  applied 4 changes                                                                   1h02m
+
+   ✓  homebrew            install 1                                                           1m48s
+   ✓  packages            install 3                                                           1m32s
+   ✓  git-config          up to date
+   ✓  links               link 1                                                                 1s
+   ✓  login-shell         known after apply                                                  58m44s
+
+ 4 changed · 1 up to date
+ logs ~/.local/state/booster/logs/apply-20261108-140200-1.log

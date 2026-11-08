@@ -1,0 +1,8 @@
+ booster  stopped at links                                                3m26s
+
+   ✓  git-config          up to date
+   ✗  links               link 1                                             6s
+      │ context canceled
+
+ 2 changed · 1 up to date · 1 failed · 1 not run
+ logs ~/.local/state/booster/logs/apply-20261108-140200-1.log

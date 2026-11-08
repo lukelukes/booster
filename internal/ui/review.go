@@ -3,7 +3,6 @@ package ui
 import (
 	"booster/internal/model"
 	"fmt"
-	"io"
 	"math"
 	"strings"
 
@@ -39,15 +38,6 @@ const (
 	cursorMarker  = " ▸ "
 	noCursorSpace = "   "
 )
-
-func Review(in io.Reader, out io.Writer, h Header, p model.Plan, mode Mode) (Decision, error) {
-	m := newReview(lipgloss.NewRenderer(out), h, p, mode)
-	final, err := tea.NewProgram(m, tea.WithInput(in), tea.WithOutput(out)).Run()
-	if err != nil {
-		return Decision{}, err
-	}
-	return final.(review).decision, nil
-}
 
 type review struct {
 	header   Header
@@ -86,7 +76,7 @@ func (m review) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "enter":
 			m.decision = m.decide()
-			return m, tea.Quit
+			return m, func() tea.Msg { return decided{} }
 		case "up", "k":
 			if _, first, _ := m.body(); first < m.offset {
 				m.offset--
@@ -131,28 +121,40 @@ func (m review) decide() Decision {
 }
 
 func (m review) viewport() int {
-	if m.height == 0 {
-		return math.MaxInt
-	}
-	return max(m.height-chromeHeight, 1)
+	return viewport(m.height, chromeHeight)
 }
 
 func (m review) scroll() int {
 	lines, first, last := m.body()
-	avail := m.viewport()
-	if len(lines) <= avail {
+	return scrollOffset(m.offset, len(lines), first, last, m.viewport())
+}
+
+func viewport(height, chrome int) int {
+	if height == 0 {
+		return math.MaxInt
+	}
+	return max(height-chrome, 1)
+}
+
+func scrollOffset(offset, total, first, last, avail int) int {
+	if total <= avail {
 		return 0
 	}
 	low, high := last-avail+1, first
-	offset := min(max(m.offset, min(low, high)), max(low, high))
-	return min(offset, len(lines)-avail)
+	offset = min(max(offset, min(low, high)), max(low, high))
+	return min(offset, total-avail)
+}
+
+func visible(lines []string, offset, avail int) []string {
+	if len(lines) <= avail {
+		return lines
+	}
+	return lines[offset : offset+avail]
 }
 
 func (m review) View() string {
 	lines, _, _ := m.body()
-	if len(lines) > m.viewport() {
-		lines = lines[m.offset : m.offset+m.viewport()]
-	}
+	lines = visible(lines, m.offset, m.viewport())
 
 	var b strings.Builder
 	b.WriteString(m.headerLine())
@@ -390,17 +392,20 @@ type seg struct {
 }
 
 func (m review) row(left, right []seg, selected bool) string {
-	width := m.lineWidth()
+	return renderRow(m.st, m.lineWidth(), left, right, selected)
+}
+
+func renderRow(st styles, width int, left, right []seg, selected bool) string {
 	used := segWidth(left) + segWidth(right)
 
 	segs := left
 	if len(right) > 0 {
-		segs = append(segs, seg{strings.Repeat(" ", max(width-1-used, 1)), m.st.text})
+		segs = append(segs, seg{strings.Repeat(" ", max(width-1-used, 1)), st.text})
 		segs = append(segs, right...)
 	}
 	if selected {
 		if fill := width - segWidth(segs); fill > 0 {
-			segs = append(segs, seg{strings.Repeat(" ", fill), m.st.text})
+			segs = append(segs, seg{strings.Repeat(" ", fill), st.text})
 		}
 	}
 
@@ -408,7 +413,7 @@ func (m review) row(left, right []seg, selected bool) string {
 	for _, s := range segs {
 		style := s.style
 		if selected {
-			style = style.Background(m.st.cursorBackground)
+			style = style.Background(st.cursorBackground)
 		}
 		b.WriteString(style.Render(s.text))
 	}

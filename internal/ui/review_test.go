@@ -2,6 +2,7 @@ package ui
 
 import (
 	"booster/internal/model"
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -125,11 +126,21 @@ func TestReview_Decisions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			in := strings.NewReader(strings.Join(tt.keys, ""))
+			var started []Decision
+			start := func(d Decision) (Job, error) {
+				started = append(started, d)
+				return Job{Plan: tt.plan, Run: func(context.Context, func(model.Event)) {}}, nil
+			}
 
-			got, err := Review(in, io.Discard, header, tt.plan, tt.mode)
+			got, err := Review(t.Context(), in, io.Discard, header, tt.plan, tt.mode, start)
 
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
+			if tt.want.Apply {
+				assert.Equal(t, []Decision{tt.want}, started)
+			} else {
+				assert.Empty(t, started)
+			}
 		})
 	}
 }

@@ -25,6 +25,7 @@ type styles struct {
 	ok               lipgloss.Style
 	okBold           lipgloss.Style
 	fault            lipgloss.Style
+	faultBold        lipgloss.Style
 }
 
 func newStyles(r *lipgloss.Renderer) styles {
@@ -42,5 +43,6 @@ func newStyles(r *lipgloss.Renderer) styles {
 		ok:               fg(colorOK),
 		okBold:           fg(colorOK).Bold(true),
 		fault:            fg(colorFault),
+		faultBold:        fg(colorFault).Bold(true),
 	}
 }

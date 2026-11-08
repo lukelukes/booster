@@ -1,0 +1,14 @@
+ booster  applying 4 changes                                                         2 of 4 · 2m04s
+
+   ✓  homebrew            install 1                                                           1m48s
+   ●  packages            install 3                                                             16s
+      │ ==> Pouring ripgrep--14.1.1.arm64_sequoia.bottle.tar.gz
+      │ ==> Fetching starship
+      │ ==> Downloading https://ghcr.io/v2/homebrew/core/starship/manifests/1.21.1/with/a/path/lon…
+      │ ==> Pouring    starship--1.21.1.arm64_sequoia.bottle.tar.gz
+   ✓  git-config          up to date
+   ·  links               link 1
+   ·  login-shell         known after apply
+
+ ━━━━━━━━━━━━━━━━━━━━━━━─────────────────────────────────────────────────────────────────────   25%
+ logs ~/.local/state/booster/logs/apply-20261108-140200-1.log                o output   ctrl+c stop

@@ -1,0 +1,11 @@
+ booster  stopped at links                                                                    3m26s
+
+   ✓  homebrew            install 1                                                           1m48s
+   ✓  packages            install 3                                                           1m32s
+   ✓  git-config          up to date
+   ✗  links               link 1                                                                 6s
+      │ context canceled
+   ·  login-shell         known after apply
+
+ 2 changed · 1 up to date · 1 failed · 1 not run
+ logs ~/.local/state/booster/logs/apply-20261108-140200-1.log

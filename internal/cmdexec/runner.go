@@ -5,7 +5,6 @@ import (
 	"context"
 	"io"
 	"os/exec"
-	"strings"
 )
 
 type Runner interface {
@@ -73,14 +72,22 @@ func (w *lineWriter) Write(p []byte) (int, error) {
 		if i < 0 {
 			return len(p), nil
 		}
-		w.sink(strings.TrimRight(string(w.buf[:i]), "\r"))
+		w.sink(lastSegment(w.buf[:i]))
 		w.buf = w.buf[i+1:]
 	}
 }
 
 func (w *lineWriter) flush() {
 	if len(w.buf) > 0 {
-		w.sink(strings.TrimRight(string(w.buf), "\r"))
+		w.sink(lastSegment(w.buf))
 		w.buf = nil
 	}
+}
+
+func lastSegment(line []byte) string {
+	line = bytes.TrimRight(line, "\r")
+	if i := bytes.LastIndexByte(line, '\r'); i >= 0 {
+		line = line[i+1:]
+	}
+	return string(line)
 }

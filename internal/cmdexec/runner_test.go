@@ -2,7 +2,10 @@ package cmdexec
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,6 +22,8 @@ func TestRealRunner_StreamsLinesToTheSinkOnTheContext(t *testing.T) {
 		{name: "unterminated last line", script: `echo first; printf last`, want: []string{"first", "last"}},
 		{name: "line written in pieces", script: `printf 'hel'; sleep 0.05; printf 'lo\r\n'`, want: []string{"hello"}},
 		{name: "blank lines kept", script: `echo a; echo; echo b`, want: []string{"a", "", "b"}},
+		{name: "progress redraws keep the last frame", script: `printf 'jq 10%%\rjq 60%%\rjq 100%%\n'; echo next`, want: []string{"jq 100%", "next"}},
+		{name: "unterminated progress keeps the last frame", script: `printf 'jq 10%%\rjq 60%%'`, want: []string{"jq 60%"}},
 	}
 
 	for _, tt := range tests {
@@ -32,6 +37,32 @@ func TestRealRunner_StreamsLinesToTheSinkOnTheContext(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestRealRunner_DeliversLinesWhileTheProcessIsStillRunning(t *testing.T) {
+	release := filepath.Join(t.TempDir(), "release")
+	lines := make(chan string, 2)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ctx = WithLineSink(ctx, func(line string) { lines <- line })
+	done := make(chan error, 1)
+
+	go func() {
+		_, err := DefaultRunner().Run(ctx, "sh", "-c", `echo ready; while [ ! -e "$1" ]; do sleep 0.01; done; echo released`, "sh", release)
+		done <- err
+	}()
+
+	select {
+	case line := <-lines:
+		assert.Equal(t, "ready", line)
+	case err := <-done:
+		t.Fatalf("process exited before any line arrived: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("no line arrived while the process was running")
+	}
+	require.NoError(t, os.WriteFile(release, nil, 0o644))
+	require.NoError(t, <-done)
+	assert.Equal(t, "released", <-lines)
 }
 
 func TestRealRunner_StillReturnsTheFullOutput(t *testing.T) {

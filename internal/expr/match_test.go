@@ -1,6 +1,7 @@
 package expr
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -164,6 +165,91 @@ other: value
 			want: `[brew, brew]`,
 		},
 		{
+			name: "dereferences an aliased match body",
+			src: `
+- &body
+  on: ${ os }
+  cases: {darwin: brew}
+- match: *body
+`,
+			want: `[{on: "${ os }", cases: {darwin: brew}}, brew]`,
+		},
+		{
+			name: "dereferences an aliased on",
+			src: `
+- &selector ${ os }
+- match:
+    on: *selector
+    cases: {darwin: brew}
+`,
+			want: `["${ os }", brew]`,
+		},
+		{
+			name: "dereferences aliased cases",
+			src: `
+- &table {darwin: brew, arch: pacman}
+- match:
+    on: ${ os }
+    cases: *table
+`,
+			want: `[{darwin: brew, arch: pacman}, brew]`,
+		},
+		{
+			name:    "rejects a sequence that contains itself",
+			src:     `&loop [a, *loop]`,
+			wantErr: "[1]: alias refers to itself",
+		},
+		{
+			name: "rejects a mapping that contains itself",
+			src: `
+outer: &loop
+  inner: *loop
+`,
+			wantErr: ".outer.inner: alias refers to itself",
+		},
+		{
+			name: "rejects a selected branch that contains its match",
+			src: `
+&loop
+match:
+  on: ${ os }
+  cases:
+    darwin: [*loop]
+`,
+			wantErr: ".match.cases.darwin[0]: alias refers to itself",
+		},
+		{
+			name: "rejects a repeated on",
+			src: `
+match:
+  on: linux
+  on: darwin
+  cases: {darwin: a}
+`,
+			wantErr: `.match: duplicate key "on"`,
+		},
+		{
+			name: "rejects a repeated cases",
+			src: `
+match:
+  on: ${ os }
+  cases: {darwin: a}
+  cases: {darwin: b}
+`,
+			wantErr: `.match: duplicate key "cases"`,
+		},
+		{
+			name: "rejects a repeated default",
+			src: `
+match:
+  on: ${ os }
+  cases: {arch: a}
+  default: b
+  default: c
+`,
+			wantErr: `.match: duplicate key "default"`,
+		},
+		{
 			name: "errors with the path when nothing matches and there is no default",
 			src: `
 - packages:
@@ -304,4 +390,18 @@ func TestResolveMatchesLeavesInputUntouched(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, decodeNode(t, yamlNode(t, src)), decodeNode(t, input))
+}
+
+func TestResolveMatchesReportsThePathSeparately(t *testing.T) {
+	_, err := ResolveMatches(yamlNode(t, `
+- packages:
+    match:
+      on: ${ os }
+      cases: {arch: [pacman]}
+`), &Context{OS: "darwin"})
+
+	pathErr, ok := errors.AsType[*PathError](err)
+	require.True(t, ok)
+	assert.Equal(t, "[0].packages.match", pathErr.Path)
+	assert.EqualError(t, pathErr.Err, `no case for "darwin" and no default`)
 }

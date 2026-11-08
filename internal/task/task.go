@@ -162,7 +162,10 @@ func (b *Builder) Build(tasks []config.Task) ([]Task, error) {
 func resolveArgs(node yaml.Node, ctx *expr.Context) (any, error) {
 	matched, err := expr.ResolveMatches(node, ctx)
 	if err != nil {
-		return nil, fmt.Errorf("args%w", err)
+		if pathErr, ok := errors.AsType[*expr.PathError](err); ok {
+			return nil, fmt.Errorf("args%s: %w", pathErr.Path, pathErr.Err)
+		}
+		return nil, fmt.Errorf("args: %w", err)
 	}
 
 	rawArgs, err := decodeArgs(matched)

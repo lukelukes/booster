@@ -8,44 +8,75 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type PathError struct {
+	Path string
+	Err  error
+}
+
+func (e *PathError) Error() string {
+	return e.Path + ": " + e.Err.Error()
+}
+
+func (e *PathError) Unwrap() error {
+	return e.Err
+}
+
+func pathErrorf(path, format string, args ...any) error {
+	return &PathError{Path: path, Err: fmt.Errorf(format, args...)}
+}
+
 func ResolveMatches(node yaml.Node, ctx *Context) (yaml.Node, error) {
-	resolved, err := resolveMatchesAt(&node, ctx, "")
+	m := matcher{ctx: ctx, active: map[*yaml.Node]bool{}}
+	resolved, err := m.resolve(&node, "")
 	if err != nil {
 		return yaml.Node{}, err
 	}
 	return *resolved, nil
 }
 
-func resolveMatchesAt(node *yaml.Node, ctx *Context, path string) (*yaml.Node, error) {
-	switch node.Kind {
-	case yaml.AliasNode:
-		return resolveMatchesAt(node.Alias, ctx, path)
-	case yaml.MappingNode:
-		if len(node.Content) == 2 && node.Content[0].Value == "match" {
-			return resolveMatch(node.Content[1], ctx, path+".match")
+type matcher struct {
+	ctx    *Context
+	active map[*yaml.Node]bool
+}
+
+func (m matcher) resolve(node *yaml.Node, path string) (*yaml.Node, error) {
+	if node.Kind == yaml.AliasNode {
+		if m.active[node.Alias] {
+			return nil, pathErrorf(path, "alias refers to itself")
 		}
-		out := copyNode(node)
-		for i := 1; i < len(out.Content); i += 2 {
-			resolved, err := resolveMatchesAt(out.Content[i], ctx, path+pathKey(out.Content[i-1].Value))
-			if err != nil {
-				return nil, err
-			}
-			out.Content[i] = resolved
-		}
-		return out, nil
-	case yaml.SequenceNode, yaml.DocumentNode:
-		out := copyNode(node)
-		for i, child := range out.Content {
-			resolved, err := resolveMatchesAt(child, ctx, fmt.Sprintf("%s[%d]", path, i))
-			if err != nil {
-				return nil, err
-			}
-			out.Content[i] = resolved
-		}
-		return out, nil
-	default:
+		return m.resolve(node.Alias, path)
+	}
+	if node.Kind != yaml.MappingNode && node.Kind != yaml.SequenceNode && node.Kind != yaml.DocumentNode {
 		return node, nil
 	}
+
+	m.active[node] = true
+	defer delete(m.active, node)
+
+	if node.Kind == yaml.MappingNode && len(node.Content) == 2 && node.Content[0].Value == "match" {
+		return m.resolveMatch(node.Content[1], path+".match")
+	}
+
+	out := copyNode(node)
+	if node.Kind == yaml.MappingNode {
+		for i := 1; i < len(out.Content); i += 2 {
+			resolved, err := m.resolve(out.Content[i], path+pathKey(out.Content[i-1].Value))
+			if err != nil {
+				return nil, err
+			}
+			out.Content[i] = resolved
+		}
+		return out, nil
+	}
+
+	for i, child := range out.Content {
+		resolved, err := m.resolve(child, fmt.Sprintf("%s[%d]", path, i))
+		if err != nil {
+			return nil, err
+		}
+		out.Content[i] = resolved
+	}
+	return out, nil
 }
 
 func copyNode(node *yaml.Node) *yaml.Node {
@@ -54,61 +85,69 @@ func copyNode(node *yaml.Node) *yaml.Node {
 	return &out
 }
 
-func resolveMatch(block *yaml.Node, ctx *Context, path string) (*yaml.Node, error) {
+func deref(node *yaml.Node) *yaml.Node {
+	for node.Kind == yaml.AliasNode {
+		node = node.Alias
+	}
+	return node
+}
+
+func (m matcher) resolveMatch(block *yaml.Node, path string) (*yaml.Node, error) {
+	block = deref(block)
 	if block.Kind != yaml.MappingNode {
-		return nil, fmt.Errorf("%s: must be a mapping with 'on', 'cases' and optional 'default'", path)
+		return nil, pathErrorf(path, "must be a mapping with 'on', 'cases' and optional 'default'")
 	}
 
-	var on, cases, fallback *yaml.Node
+	fields := map[string]*yaml.Node{}
 	for i := 0; i < len(block.Content); i += 2 {
-		value := block.Content[i+1]
-		switch key := block.Content[i].Value; key {
-		case "on":
-			on = value
-		case "cases":
-			cases = value
-		case "default":
-			fallback = value
+		key := block.Content[i].Value
+		switch key {
+		case "on", "cases", "default":
 		default:
-			return nil, fmt.Errorf("%s: unknown key %q", path, key)
+			return nil, pathErrorf(path, "unknown key %q", key)
 		}
+		if fields[key] != nil {
+			return nil, pathErrorf(path, "duplicate key %q", key)
+		}
+		fields[key] = block.Content[i+1]
 	}
+	on, cases, fallback := fields["on"], fields["cases"], fields["default"]
 	if on == nil {
-		return nil, fmt.Errorf("%s: missing 'on'", path)
+		return nil, pathErrorf(path, "missing 'on'")
 	}
 	if cases == nil {
-		return nil, fmt.Errorf("%s: missing 'cases'", path)
+		return nil, pathErrorf(path, "missing 'cases'")
 	}
 
 	var raw Str
-	if err := raw.UnmarshalYAML(on); err != nil {
-		return nil, fmt.Errorf("%s.on: %w", path, err)
+	if err := raw.UnmarshalYAML(deref(on)); err != nil {
+		return nil, &PathError{Path: path + ".on", Err: err}
 	}
-	if ctx == nil {
-		return nil, fmt.Errorf("%s.on: expression context is required", path)
+	if m.ctx == nil {
+		return nil, pathErrorf(path+".on", "expression context is required")
 	}
-	selector, err := raw.Resolve(ctx)
+	selector, err := raw.Resolve(m.ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%s.on: %w", path, err)
+		return nil, &PathError{Path: path + ".on", Err: err}
 	}
 
-	branch, branchPath, err := selectCase(cases, selector, path+".cases")
+	branch, branchPath, err := selectCase(deref(cases), selector, path+".cases")
 	if err != nil {
 		return nil, err
 	}
 	if branch == nil {
 		if fallback == nil {
-			return nil, fmt.Errorf("%s: no case for %q and no default", path, selector)
+			return nil, pathErrorf(path, "no case for %q and no default", selector)
 		}
 		branch, branchPath = fallback, path+".default"
 	}
 
-	return resolveMatchesAt(branch, ctx, branchPath)
+	return m.resolve(branch, branchPath)
 }
 
 func selectCase(cases *yaml.Node, selector, path string) (*yaml.Node, string, error) {
 	if cases.Kind != yaml.MappingNode {
-		return nil, "", fmt.Errorf("%s: must be a mapping of case values to branches", path)
+		return nil, "", pathErrorf(path, "must be a mapping of case values to branches")
 	}
 
 	seen := make(map[string]bool, len(cases.Content)/2)
@@ -116,10 +155,10 @@ func selectCase(cases *yaml.Node, selector, path string) (*yaml.Node, string, er
 	for i := 0; i < len(cases.Content); i += 2 {
 		key := cases.Content[i]
 		if key.Kind != yaml.ScalarNode {
-			return nil, "", fmt.Errorf("%s: case keys must be scalars, got %s", path, nodeKindName(key.Kind))
+			return nil, "", pathErrorf(path, "case keys must be scalars, got %s", nodeKindName(key.Kind))
 		}
 		if seen[key.Value] {
-			return nil, "", fmt.Errorf("%s: duplicate case %q", path, key.Value)
+			return nil, "", pathErrorf(path, "duplicate case %q", key.Value)
 		}
 		seen[key.Value] = true
 		if key.Value == selector {

@@ -18,8 +18,32 @@ type Config struct {
 }
 
 type VariableDef struct {
-	Prompt  string `yaml:"prompt"`
-	Default string `yaml:"default,omitempty"`
+	Prompt  string    `yaml:"prompt"`
+	Default yaml.Node `yaml:"default,omitempty"`
+}
+
+func (v VariableDef) ResolveDefault(ctx *expr.Context) (string, error) {
+	node, err := expr.ResolveMatches(v.Default, ctx)
+	if err != nil {
+		if pathErr, ok := errors.AsType[*expr.PathError](err); ok {
+			return "", fmt.Errorf("default%s: %w", pathErr.Path, pathErr.Err)
+		}
+		return "", fmt.Errorf("default: %w", err)
+	}
+	if node.IsZero() {
+		return "", nil
+	}
+
+	var scalar expr.Str
+	if err := scalar.UnmarshalYAML(&node); err != nil {
+		return "", fmt.Errorf("default: %w", err)
+	}
+
+	var value string
+	if err := node.Decode(&value); err != nil {
+		return "", fmt.Errorf("default: %w", err)
+	}
+	return value, nil
 }
 
 type Task struct {

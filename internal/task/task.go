@@ -123,17 +123,9 @@ func (b *Builder) Build(tasks []config.Task) ([]Task, error) {
 			}
 
 			deferred := NewDeferredFactoryTask(ct.Action, func() ([]Task, error) {
-				rawArgs, err := decodeArgs(ct.Args)
+				resolvedArgs, err := resolveArgs(ct.Args, b.exprCtx)
 				if err != nil {
-					return nil, fmt.Errorf("args: %w", err)
-				}
-
-				resolvedArgs, err := resolveTaskArgs(rawArgs, b.exprCtx)
-				if err != nil {
-					if argErr, ok := errors.AsType[*argResolveError](err); ok {
-						return nil, fmt.Errorf("args%s: %v", argErr.path, argErr.err)
-					}
-					return nil, fmt.Errorf("args: %w", err)
+					return nil, err
 				}
 
 				created, err := factory(resolvedArgs)
@@ -151,17 +143,9 @@ func (b *Builder) Build(tasks []config.Task) ([]Task, error) {
 			continue
 		}
 
-		rawArgs, err := decodeArgs(ct.Args)
+		resolvedArgs, err := resolveArgs(ct.Args, b.exprCtx)
 		if err != nil {
-			return nil, fmt.Errorf("task %d (%s): args: %w", i+1, ct.Action, err)
-		}
-
-		resolvedArgs, err := resolveTaskArgs(rawArgs, b.exprCtx)
-		if err != nil {
-			if argErr, ok := errors.AsType[*argResolveError](err); ok {
-				return nil, fmt.Errorf("task %d (%s): args%s: %v", i+1, ct.Action, argErr.path, argErr.err)
-			}
-			return nil, fmt.Errorf("task %d (%s): args: %w", i+1, ct.Action, err)
+			return nil, fmt.Errorf("task %d (%s): %w", i+1, ct.Action, err)
 		}
 
 		created, err := factory(resolvedArgs)
@@ -173,6 +157,31 @@ func (b *Builder) Build(tasks []config.Task) ([]Task, error) {
 	}
 
 	return result, nil
+}
+
+func resolveArgs(node yaml.Node, ctx *expr.Context) (any, error) {
+	matched, err := expr.ResolveMatches(node, ctx)
+	if err != nil {
+		if pathErr, ok := errors.AsType[*expr.PathError](err); ok {
+			return nil, fmt.Errorf("args%s: %w", pathErr.Path, pathErr.Err)
+		}
+		return nil, fmt.Errorf("args: %w", err)
+	}
+
+	rawArgs, err := decodeArgs(matched)
+	if err != nil {
+		return nil, fmt.Errorf("args: %w", err)
+	}
+
+	resolvedArgs, err := resolveTaskArgs(rawArgs, ctx)
+	if err != nil {
+		if argErr, ok := errors.AsType[*argResolveError](err); ok {
+			return nil, fmt.Errorf("args%s: %v", argErr.path, argErr.err)
+		}
+		return nil, fmt.Errorf("args: %w", err)
+	}
+
+	return resolvedArgs, nil
 }
 
 func decodeArgs(node yaml.Node) (any, error) {

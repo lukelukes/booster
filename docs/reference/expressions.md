@@ -60,6 +60,35 @@ args:
 
 The `when` field requires the expression to evaluate to bool.
 
+## Picking a value with `match`
+
+A `match` block picks one value out of several. Use it anywhere in task `args` or as a variable `default`.
+
+```yaml
+- action: pkg.install
+  args:
+    match:
+      on: ${ os }
+      cases:
+        arch: [git-delta, ghostty]
+        darwin:
+          - packages: [git-delta, gh]
+          - casks: [ghostty]
+      default: []
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `on` | Yes | A string or expression. It is evaluated once. |
+| `cases` | Yes | A mapping from case value to branch. The result of `on` is turned into a string and compared exactly with each key. |
+| `default` | No | The branch to use when no case matches. `default: ~` and `default: []` both count as a default. |
+
+The block is replaced by the chosen branch, so the action sees the branch as if you had written it there. A branch can be a string, a list or a mapping, and it can hold more `match` blocks or `${ }` expressions. Branches that are not chosen are never evaluated.
+
+A mapping is a `match` block only when `match` is its only key. If no case matches and there is no `default`, booster stops before running anything and reports the task and the path, for example `task 3 (pkg.install): args[1].match: no case for "ubuntu" and no default`.
+
+For two branches a ternary is fine: `${ os == "darwin" ? "brew" : "pacman" }`. For three or more, use `match` instead of nesting ternaries.
+
 ## Examples
 
 ```yaml

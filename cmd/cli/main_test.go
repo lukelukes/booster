@@ -222,6 +222,20 @@ tasks:
 `,
 			errContain: "build tasks",
 		},
+		{
+			name: "args that expand shared aliases past the budget",
+			content: `version: "1"
+tasks:
+  - action: dir.create
+    args:
+      - &a [x, x, x, x, x, x, x, x, x, x]
+      - &b [*a, *a, *a, *a, *a, *a, *a, *a, *a, *a]
+      - &c [*b, *b, *b, *b, *b, *b, *b, *b, *b, *b]
+      - &d [*c, *c, *c, *c, *c, *c, *c, *c, *c, *c]
+      - &e [*d, *d, *d, *d, *d, *d, *d, *d, *d, *d]
+`,
+			errContain: "task 1 (dir.create): args[3][7][9][0][1]: too many alias expansions",
+		},
 	}
 
 	for _, tt := range tests {

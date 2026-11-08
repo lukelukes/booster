@@ -18,7 +18,7 @@ Each entry in `tasks` is an object with the following fields:
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `action` | string | Yes | Action to execute. One of: `dir.create`, `symlink.create`, `template.render`, `pkg.install`, `pkg-manager.install`, `mise.use`, `git.config`, `set.darwin.defaults`. See [Actions Reference](actions.md). |
-| `args` | varies | Depends on action | Action-specific arguments. See [Actions Reference](actions.md). |
+| `args` | varies | Depends on action | Action-specific arguments. See [Actions Reference](actions.md). Any value can be a [`match` block](expressions.md#picking-a-value-with-match). |
 | `when` | string | No | Expression string in `${ ... }` form. The task runs only when the expression evaluates to true. See [Expressions Reference](expressions.md). |
 
 ## Variable
@@ -28,7 +28,7 @@ Each key under `variables` is the variable name. The value is an object with the
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `prompt` | string | Yes | Prompt text shown to the user to collect the value. |
-| `default` | string | No | Default value pre-filled in the prompt. |
+| `default` | string or `match` | No | Default value pre-filled in the prompt. A [`match` block](expressions.md#picking-a-value-with-match) can pick it, as long as the chosen branch is a string. |
 
 Variable values are collected via interactive prompts at runtime. Collected values are persisted to `$XDG_DATA_HOME/cli/values.yaml` (defaults to `~/.local/share/cli/values.yaml`).
 

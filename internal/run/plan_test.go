@@ -69,7 +69,7 @@ func TestPlan_KeepsActionsForApply(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, plan.Steps, 1)
-	assert.Same(t, a, plan.Steps[0].Step.Action)
+	assert.Same(t, a, plan.Steps[0].Action)
 }
 
 func TestPlan_FailsNamingTheStepWhenCheckFails(t *testing.T) {

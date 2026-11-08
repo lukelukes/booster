@@ -1,14 +1,15 @@
 package run
 
 import (
+	"booster/internal/action"
 	"booster/internal/model"
 	"context"
 	"fmt"
 )
 
 type Planned struct {
-	Step   Step
-	Change model.Change
+	model.PlannedStep
+	Action action.Action
 }
 
 type PlanResult struct {
@@ -24,16 +25,19 @@ func Plan(ctx context.Context, compiled Compiled) (PlanResult, error) {
 		if err != nil {
 			return PlanResult{}, fmt.Errorf("check %q: %w", step.Name, err)
 		}
-		result.Steps = append(result.Steps, Planned{Step: step, Change: change})
+		result.Steps = append(result.Steps, Planned{
+			PlannedStep: model.PlannedStep{Name: step.Name, Change: change},
+			Action:      step.Action,
+		})
 	}
 
 	return result, nil
 }
 
 func (p PlanResult) View() model.Plan {
-	view := model.Plan{Steps: make([]model.PlannedStep, 0, len(p.Steps)), Excluded: p.Excluded}
-	for _, s := range p.Steps {
-		view.Steps = append(view.Steps, model.PlannedStep{Name: s.Step.Name, Change: s.Change})
+	view := model.Plan{Steps: make([]model.PlannedStep, len(p.Steps)), Excluded: p.Excluded}
+	for i, s := range p.Steps {
+		view.Steps[i] = s.PlannedStep
 	}
 	return view
 }

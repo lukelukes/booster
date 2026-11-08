@@ -33,7 +33,8 @@ type terminal struct {
 	openLog     func() (logFile, error)
 	interactive bool
 	sudo        func() error
-	keepSudo    func(context.Context) (stop func())
+	sudoRunner  cmdexec.Runner
+	sudoTicks   <-chan time.Time
 }
 
 type logFile interface {
@@ -42,13 +43,16 @@ type logFile interface {
 }
 
 func (c *ApplyCmd) Run(cli *CLI) error {
+	ticker := time.NewTicker(run.SudoRefreshInterval)
+	defer ticker.Stop()
 	return c.run(context.Background(), cli, terminal{
 		in:          os.Stdin,
 		out:         os.Stdout,
 		openLog:     func() (logFile, error) { return openLog(logDir()) },
 		interactive: isTerminal(os.Stdin),
 		sudo:        ensureSudo,
-		keepSudo:    keepSudoAlive,
+		sudoRunner:  cmdexec.DefaultRunner(),
+		sudoTicks:   ticker.C,
 	})
 }
 
@@ -103,7 +107,7 @@ func applySteps(ctx context.Context, plan run.PlanResult, view model.Plan, term 
 	ctx, stopSignals := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 	if view.NeedsSudo() {
-		stop := term.keepSudo(ctx)
+		stop := run.KeepSudoAlive(ctx, term.sudoRunner, term.sudoTicks)
 		defer stop()
 	}
 	screen, logged := ui.Progress(term.out, view), ui.Progress(log, view)
@@ -118,15 +122,6 @@ func applySteps(ctx context.Context, plan run.PlanResult, view model.Plan, term 
 		return fmt.Errorf("apply: %d of %d steps failed", summary.Failed, summary.Total)
 	}
 	return nil
-}
-
-func keepSudoAlive(ctx context.Context) (stop func()) {
-	ticker := time.NewTicker(run.SudoRefreshInterval)
-	stopRefresh := run.KeepSudoAlive(ctx, cmdexec.DefaultRunner(), ticker.C)
-	return func() {
-		stopRefresh()
-		ticker.Stop()
-	}
 }
 
 type runLog struct {

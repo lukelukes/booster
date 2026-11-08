@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -52,11 +53,13 @@ tasks:
 }
 
 type fakeTerminal struct {
-	out     strings.Builder
-	logDir  string
-	events  []string
-	sudoErr error
-	log     *brokenLog
+	out        strings.Builder
+	logDir     string
+	events     []string
+	sudoErr    error
+	log        *brokenLog
+	sudoRunner cmdexec.Runner
+	sudoTicks  chan time.Time
 }
 
 type brokenLog struct {
@@ -77,15 +80,13 @@ func (l *brokenLog) Write(p []byte) (int, error) {
 
 func (l *brokenLog) Close() error { return l.closeErr }
 
-func (ft *fakeTerminal) keepSudo(context.Context) func() {
-	ft.events = append(ft.events, "keepalive start")
-	return func() { ft.events = append(ft.events, "keepalive stop") }
-}
-
 func (ft *fakeTerminal) terminal(t *testing.T, input string, interactive bool) terminal {
 	t.Helper()
 	if ft.logDir == "" {
 		ft.logDir = t.TempDir()
+	}
+	if ft.sudoRunner == nil {
+		ft.sudoRunner = &cmdexec.MockRunner{}
 	}
 	return terminal{
 		in:  strings.NewReader(input),
@@ -102,7 +103,8 @@ func (ft *fakeTerminal) terminal(t *testing.T, input string, interactive bool) t
 			ft.events = append(ft.events, "sudo")
 			return ft.sudoErr
 		},
-		keepSudo: ft.keepSudo,
+		sudoRunner: ft.sudoRunner,
+		sudoTicks:  ft.sudoTicks,
 	}
 }
 
@@ -219,30 +221,30 @@ func TestApplyCmd_FailedStepStopsTheRun(t *testing.T) {
 	assert.NoFileExists(t, f.link)
 }
 
-func TestApplyCmd_KeepsSudoAliveOnlyWhileApplying(t *testing.T) {
+func TestApplyCmd_RefreshesSudoOnlyWhileApplying(t *testing.T) {
 	tests := []struct {
 		name       string
-		onApply    func(cancel context.CancelFunc) error
+		finish     func(cancel context.CancelFunc) error
 		wantEvents []string
 		wantErr    string
 		wantOut    string
 	}{
 		{
 			name:       "completed",
-			wantEvents: []string{"sudo", "keepalive start", "apply a", "apply b", "keepalive stop"},
+			wantEvents: []string{"sudo", "apply a", "apply b"},
 			wantOut:    "2 changed · 0 up to date",
 		},
 		{
 			name:       "failed",
-			onApply:    func(context.CancelFunc) error { return errors.New("exit status 1") },
-			wantEvents: []string{"sudo", "keepalive start", "apply a", "keepalive stop"},
+			finish:     func(context.CancelFunc) error { return errors.New("exit status 1") },
+			wantEvents: []string{"sudo", "apply a"},
 			wantErr:    "1 of 2 steps failed",
 			wantOut:    "- b  not run",
 		},
 		{
 			name:       "interrupted",
-			onApply:    func(cancel context.CancelFunc) error { cancel(); return nil },
-			wantEvents: []string{"sudo", "keepalive start", "apply a", "keepalive stop"},
+			finish:     func(cancel context.CancelFunc) error { cancel(); return nil },
+			wantEvents: []string{"sudo", "apply a"},
 			wantErr:    "apply interrupted: context canceled",
 			wantOut:    "- b  not run",
 		},
@@ -250,13 +252,30 @@ func TestApplyCmd_KeepsSudoAliveOnlyWhileApplying(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var ft fakeTerminal
+			refreshes := make(chan []string, 10)
+			ft := fakeTerminal{
+				sudoTicks: make(chan time.Time, 1),
+				sudoRunner: &cmdexec.MockRunner{RunFunc: func(_ context.Context, name string, args ...string) ([]byte, error) {
+					refreshes <- append([]string{name}, args...)
+					return nil, nil
+				}},
+			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			needsSudo := model.Change{Kind: model.ChangeCreate, Verb: "install", NeedsSudo: true}
 			plan := run.PlanResult{Steps: []run.Planned{ft.planned("a", needsSudo), ft.planned("b", needsSudo)}}
-			if tt.onApply != nil {
-				plan.Steps[0].Action.(*fakeAction).onApply = func() error { return tt.onApply(cancel) }
+			plan.Steps[0].Action.(*fakeAction).onApply = func() error {
+				ft.sudoTicks <- time.Time{}
+				select {
+				case call := <-refreshes:
+					assert.Equal(t, []string{"sudo", "-n", "-v"}, call)
+				case <-time.After(5 * time.Second):
+					t.Error("sudo was not refreshed while applying")
+				}
+				if tt.finish != nil {
+					return tt.finish(cancel)
+				}
+				return nil
 			}
 
 			err := (&ApplyCmd{Yes: true}).applyPlan(ctx, plan, ft.terminal(t, "", false))
@@ -269,6 +288,12 @@ func TestApplyCmd_KeepsSudoAliveOnlyWhileApplying(t *testing.T) {
 			}
 			assert.Equal(t, tt.wantEvents, ft.events)
 			assert.Contains(t, ft.out.String(), tt.wantOut)
+			select {
+			case ft.sudoTicks <- time.Time{}:
+			default:
+			}
+			assert.Never(t, func() bool { return len(refreshes) > 0 }, 100*time.Millisecond, 10*time.Millisecond, "sudo was refreshed after apply finished")
+			assert.Len(t, ft.sudoTicks, 1)
 		})
 	}
 }

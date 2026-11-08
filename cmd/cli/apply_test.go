@@ -107,6 +107,7 @@ func (ft *fakeTerminal) terminal(t *testing.T, input string, interactive bool) t
 		sudoRunner: ft.sudoRunner,
 		sudoTicks:  ft.sudoTicks,
 		review:     plainReview(strings.NewReader(input), &ft.out, interactive),
+		watch:      plainWatch(&ft.out),
 	}
 }
 

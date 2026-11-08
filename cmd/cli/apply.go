@@ -35,9 +35,13 @@ type terminal struct {
 	sudoRunner cmdexec.Runner
 	sudoTicks  <-chan time.Time
 	review     reviewFunc
+	watch      watchFunc
 }
 
-type reviewFunc func(model.Plan, ui.Mode) (ui.Decision, error)
+type (
+	reviewFunc func(model.Plan, ui.Mode) (ui.Decision, error)
+	watchFunc  func(plan model.Plan, log string, events <-chan model.Event, stop func()) error
+)
 
 type logFile interface {
 	io.WriteCloser
@@ -53,18 +57,26 @@ func newTerminal(cli *CLI, profile string, sudoTicks <-chan time.Time) terminal 
 		sudoRunner: cmdexec.DefaultRunner(),
 		sudoTicks:  sudoTicks,
 		review:     plainReview(os.Stdin, os.Stdout, stdinTTY),
+		watch:      plainWatch(os.Stdout),
 	}
 	if useTUI(stdinTTY, isTerminal(os.Stdout), os.Getenv("NO_COLOR")) {
-		header := reviewHeader(cli.Config, profile)
-		term.review = func(p model.Plan, mode ui.Mode) (ui.Decision, error) {
-			return ui.Review(os.Stdin, os.Stdout, header, p, mode)
-		}
+		term = withTUI(term, os.Stdin, os.Stdin, os.Stdout, reviewHeader(cli.Config, profile))
 	}
 	return term
 }
 
 func useTUI(stdinTTY, stdoutTTY bool, noColor string) bool {
 	return stdinTTY && stdoutTTY && noColor == ""
+}
+
+func withTUI(term terminal, reviewIn, applyIn io.Reader, out io.Writer, header ui.Header) terminal {
+	term.review = func(p model.Plan, mode ui.Mode) (ui.Decision, error) {
+		return ui.Review(reviewIn, out, header, p, mode)
+	}
+	term.watch = func(p model.Plan, log string, events <-chan model.Event, stop func()) error {
+		return ui.Apply(applyIn, out, p, tilde(log), events, stop)
+	}
+	return term
 }
 
 func plainReview(in io.Reader, out io.Writer, interactive bool) reviewFunc {
@@ -86,14 +98,30 @@ func showPlan(out io.Writer, apply bool) reviewFunc {
 	}
 }
 
+func plainWatch(out io.Writer) watchFunc {
+	return func(p model.Plan, _ string, events <-chan model.Event, _ func()) error {
+		show := ui.Progress(out, p)
+		for e := range events {
+			show(e)
+		}
+		return nil
+	}
+}
+
 func reviewHeader(config, profile string) ui.Header {
 	ctx := expr.NewContext()
-	if home, err := os.UserHomeDir(); err == nil {
-		if rel, err := filepath.Rel(home, config); err == nil && !strings.HasPrefix(rel, "..") {
-			config = filepath.Join("~", rel)
-		}
+	return ui.Header{OS: ctx.OS, Arch: ctx.Arch, Profile: profile, Config: tilde(config)}
+}
+
+func tilde(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
 	}
-	return ui.Header{OS: ctx.OS, Arch: ctx.Arch, Profile: profile, Config: config}
+	if rel, err := filepath.Rel(home, path); err == nil && !strings.HasPrefix(rel, "..") {
+		return filepath.Join("~", rel)
+	}
+	return path
 }
 
 func (c *ApplyCmd) Run(cli *CLI) error {
@@ -112,11 +140,10 @@ func (c *ApplyCmd) run(ctx context.Context, cli *CLI, term terminal) error {
 
 func (c *ApplyCmd) applyPlan(ctx context.Context, plan run.PlanResult, term terminal) error {
 	view := plan.View()
-	review := term.review
 	if c.Yes || !view.HasChanges() {
-		review = showPlan(term.out, true)
+		term.review, term.watch = showPlan(term.out, true), plainWatch(term.out)
 	}
-	decision, err := review(view, ui.ModeApply)
+	decision, err := term.review(view, ui.ModeApply)
 	if err != nil {
 		return err
 	}
@@ -130,8 +157,8 @@ func (c *ApplyCmd) applyPlan(ctx context.Context, plan run.PlanResult, term term
 func execute(ctx context.Context, plan run.PlanResult, term terminal) error {
 	view := plan.View()
 	if view.NeedsSudo() {
-		if err := term.sudo(); err != nil {
-			return fmt.Errorf("sudo required: %w", err)
+		if err := sudo(term); err != nil {
+			return err
 		}
 	}
 
@@ -148,23 +175,49 @@ func execute(ctx context.Context, plan run.PlanResult, term terminal) error {
 	return errors.Join(applyErr, log.Close())
 }
 
-func applySteps(ctx context.Context, plan run.PlanResult, view model.Plan, term terminal, log io.Writer) error {
+func applySteps(ctx context.Context, plan run.PlanResult, view model.Plan, term terminal, log *runLog) error {
 	ctx, stopSignals := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
 	if view.NeedsSudo() {
-		stop := run.KeepSudoAlive(ctx, term.sudoRunner, term.sudoTicks)
-		defer stop()
+		stopKeepAlive := run.KeepSudoAlive(ctx, term.sudoRunner, term.sudoTicks)
+		defer stopKeepAlive()
 	}
-	screen, logged := ui.Progress(term.out, view), ui.Progress(log, view)
-	summary := run.Apply(ctx, plan, func(e model.Event) {
-		screen(e)
-		logged(e)
-	})
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("apply interrupted: %w", err)
+
+	logged := ui.Progress(log, view)
+	events := make(chan model.Event)
+	result := make(chan error, 1)
+	go func() {
+		defer close(events)
+		summary := run.Apply(ctx, plan, func(e model.Event) {
+			logged(e)
+			events <- e
+		})
+		if err := ctx.Err(); err != nil {
+			result <- fmt.Errorf("apply interrupted: %w", err)
+			return
+		}
+		result <- failure(summary)
+	}()
+
+	watchErr := term.watch(view, log.file.Name(), events, stop)
+	stop()
+	for range events {
 	}
-	if summary.Failed > 0 {
-		return fmt.Errorf("apply: %d of %d steps failed", summary.Failed, summary.Total)
+	return errors.Join(watchErr, <-result)
+}
+
+func sudo(term terminal) error {
+	if err := term.sudo(); err != nil {
+		return fmt.Errorf("sudo required: %w", err)
+	}
+	return nil
+}
+
+func failure(s model.Summary) error {
+	if s.Failed > 0 {
+		return fmt.Errorf("apply: %d of %d steps failed", s.Failed, s.Total)
 	}
 	return nil
 }

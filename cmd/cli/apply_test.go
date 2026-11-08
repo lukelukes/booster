@@ -51,8 +51,9 @@ tasks:
 }
 
 type fakeTerminal struct {
-	out       strings.Builder
-	sudoCalls int
+	out     strings.Builder
+	events  []string
+	sudoErr error
 }
 
 func (ft *fakeTerminal) terminal(input string, interactive bool) terminal {
@@ -61,10 +62,33 @@ func (ft *fakeTerminal) terminal(input string, interactive bool) terminal {
 		out:         &ft.out,
 		interactive: interactive,
 		sudo: func() error {
-			ft.sudoCalls++
-			return nil
+			ft.events = append(ft.events, "sudo")
+			return ft.sudoErr
 		},
 	}
+}
+
+func (ft *fakeTerminal) planned(name string, change model.Change) run.Planned {
+	return run.Planned{
+		PlannedStep: model.PlannedStep{Name: name, Change: change},
+		Action:      &fakeAction{name: name, events: &ft.events},
+	}
+}
+
+type fakeAction struct {
+	name   string
+	events *[]string
+}
+
+func (a *fakeAction) Name() string { return a.name }
+
+func (a *fakeAction) Check(context.Context) (model.Change, error) {
+	return model.Change{}, nil
+}
+
+func (a *fakeAction) Apply(context.Context) error {
+	*a.events = append(*a.events, "apply "+a.name)
+	return nil
 }
 
 func TestApplyCmd(t *testing.T) {
@@ -127,7 +151,7 @@ func TestApplyCmd(t *testing.T) {
 				assert.NoDirExists(t, f.newDir)
 				assert.NoFileExists(t, f.link)
 			}
-			assert.Zero(t, ft.sudoCalls)
+			assert.Empty(t, ft.events)
 		})
 	}
 }
@@ -166,53 +190,26 @@ func TestApplyCmd_FailedStepStopsTheRun(t *testing.T) {
 	assert.NoFileExists(t, f.link)
 }
 
-type sudoAction struct {
-	sudoCalls *int
-	sudoSeen  int
-	applied   bool
-}
-
-func (a *sudoAction) Name() string    { return "fake" }
-func (a *sudoAction) NeedsSudo() bool { return true }
-
-func (a *sudoAction) Check(context.Context) (model.Change, error) {
-	return model.Change{}, nil
-}
-
-func (a *sudoAction) Apply(context.Context) error {
-	a.applied = true
-	a.sudoSeen = *a.sudoCalls
-	return nil
-}
-
 func TestApplyCmd_AsksForSudoOnceBeforeApplying(t *testing.T) {
 	var ft fakeTerminal
 	needsSudo := model.Change{Kind: model.ChangeCreate, Verb: "install", NeedsSudo: true}
-	first, second := &sudoAction{sudoCalls: &ft.sudoCalls}, &sudoAction{sudoCalls: &ft.sudoCalls}
-	plan := run.PlanResult{Steps: []run.Planned{
-		{PlannedStep: model.PlannedStep{Name: "a", Change: needsSudo}, Action: first},
-		{PlannedStep: model.PlannedStep{Name: "b", Change: needsSudo}, Action: second},
-	}}
+	plan := run.PlanResult{Steps: []run.Planned{ft.planned("a", needsSudo), ft.planned("b", needsSudo)}}
 
 	err := (&ApplyCmd{Yes: true}).applyPlan(plan, ft.terminal("", false))
 
 	require.NoError(t, err)
-	assert.Equal(t, 1, ft.sudoCalls)
-	assert.Equal(t, 1, first.sudoSeen)
-	assert.Equal(t, 1, second.sudoSeen)
+	assert.Equal(t, []string{"sudo", "apply a", "apply b"}, ft.events)
 }
 
 func TestApplyCmd_SudoRefusedAppliesNothing(t *testing.T) {
-	a := &sudoAction{sudoCalls: new(int)}
+	ft := fakeTerminal{sudoErr: errors.New("wrong password")}
 	plan := run.PlanResult{Steps: []run.Planned{
-		{PlannedStep: model.PlannedStep{Name: "a", Change: model.Change{Kind: model.ChangeCreate, NeedsSudo: true}}, Action: a},
+		ft.planned("a", model.Change{Kind: model.ChangeCreate, NeedsSudo: true}),
 	}}
-	var out strings.Builder
-	term := terminal{out: &out, sudo: func() error { return errors.New("wrong password") }}
 
-	err := (&ApplyCmd{Yes: true}).applyPlan(plan, term)
+	err := (&ApplyCmd{Yes: true}).applyPlan(plan, ft.terminal("", false))
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "wrong password")
-	assert.False(t, a.applied)
+	assert.Equal(t, []string{"sudo"}, ft.events)
 }

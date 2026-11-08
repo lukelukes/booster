@@ -34,12 +34,13 @@ type RealRunner struct {
 }
 
 func (r *RealRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	cmd := exec.Command(name, args...)
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.WaitDelay = killGrace + time.Second
+	cmd.Cancel = func() error {
+		_ = signalGroup(cmd.Process.Pid, syscall.SIGTERM)
+		return signalGroup(cmd.Process.Pid, syscall.SIGCONT)
+	}
+	cmd.WaitDelay = killGrace
 	var out bytes.Buffer
 
 	writers := []io.Writer{&out}
@@ -55,42 +56,14 @@ func (r *RealRunner) Run(ctx context.Context, name string, args ...string) ([]by
 	w := io.MultiWriter(writers...)
 	cmd.Stdout = w
 	cmd.Stderr = w
-	if err := cmd.Start(); err != nil {
-		return out.Bytes(), err
-	}
-	pgid := cmd.Process.Pid
-	waited := make(chan struct{})
-	cancelled := make(chan bool, 1)
-	go func() { cancelled <- terminateOnCancel(ctx, pgid, waited) }()
-	err := cmd.Wait()
-	close(waited)
-	wasCancelled := <-cancelled
-	if wasCancelled || errors.Is(err, exec.ErrWaitDelay) {
-		_ = signalGroup(pgid, syscall.SIGKILL)
-	}
-	if wasCancelled && err == nil {
-		err = ctx.Err()
+	err := cmd.Run()
+	if cmd.Process != nil {
+		_ = signalGroup(cmd.Process.Pid, syscall.SIGKILL)
 	}
 	if lines != nil {
 		lines.flush()
 	}
 	return out.Bytes(), err
-}
-
-func terminateOnCancel(ctx context.Context, pgid int, waited <-chan struct{}) bool {
-	select {
-	case <-waited:
-		return false
-	case <-ctx.Done():
-	}
-	_ = signalGroup(pgid, syscall.SIGTERM)
-	_ = signalGroup(pgid, syscall.SIGCONT)
-	select {
-	case <-waited:
-	case <-time.After(killGrace):
-		_ = signalGroup(pgid, syscall.SIGKILL)
-	}
-	return true
 }
 
 func signalGroup(pgid int, sig syscall.Signal) error {

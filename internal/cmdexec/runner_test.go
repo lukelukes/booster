@@ -130,11 +130,13 @@ func TestRealRunner_CancelStopsTheWholeProcessGroup(t *testing.T) {
 func TestRealRunner_StopsChildrenLeftBehindByAnExitedParent(t *testing.T) {
 	tests := []struct {
 		name   string
+		exit   int
 		cancel bool
-		within time.Duration
 	}{
-		{name: "cancelled after the parent exited", cancel: true, within: time.Second},
-		{name: "never cancelled", within: killGrace + 2*time.Second},
+		{name: "parent exits 0", exit: 0},
+		{name: "parent exits 0, then cancelled", exit: 0, cancel: true},
+		{name: "parent exits 1", exit: 1},
+		{name: "parent exits 1, then cancelled", exit: 1, cancel: true},
 	}
 
 	for _, tt := range tests {
@@ -145,7 +147,7 @@ func TestRealRunner_StopsChildrenLeftBehindByAnExitedParent(t *testing.T) {
 			ctx = WithLineSink(ctx, func(line string) { pids <- line })
 			done := make(chan error, 1)
 			go func() {
-				_, err := DefaultRunner().Run(ctx, "sh", "-c", `echo $$; sleep 1000 & echo $!; exit 0`)
+				_, err := DefaultRunner().Run(ctx, "sh", "-c", `echo $$; sleep 1000 & echo $!; exit "$1"`, "sh", strconv.Itoa(tt.exit))
 				done <- err
 			}()
 			parent, child := readPID(t, pids), readPID(t, pids)
@@ -161,7 +163,8 @@ func TestRealRunner_StopsChildrenLeftBehindByAnExitedParent(t *testing.T) {
 			select {
 			case err := <-done:
 				require.Error(t, err)
-			case <-time.After(tt.within):
+				assert.Equal(t, tt.exit, exitCode(err))
+			case <-time.After(killGrace + time.Second):
 				t.Fatal("Run kept waiting on the child holding its output")
 			}
 			assert.Eventually(t, func() bool {
@@ -222,4 +225,11 @@ func readPID(t *testing.T, lines <-chan string) int {
 		t.Fatal("the command never printed its pid")
 		return 0
 	}
+}
+
+func exitCode(err error) int {
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
+		return exitErr.ExitCode()
+	}
+	return 0
 }

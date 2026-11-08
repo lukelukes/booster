@@ -95,7 +95,7 @@ func TestCmd_PassesArgvUnchanged(t *testing.T) {
 		{
 			name: "sudo prefixes only the run command",
 			args: "{check: [check-shell], run: [chsh, -s, /bin/zsh], sudo: true}",
-			want: []process{{"check-shell", []string{}}, {"sudo", []string{"chsh", "-s", "/bin/zsh"}}},
+			want: []process{{"check-shell", []string{}}, {"sudo", []string{"-n", "chsh", "-s", "/bin/zsh"}}},
 		},
 		{
 			name: "no check runs only the command",

@@ -87,7 +87,7 @@ func (a *Cmd) Check(ctx context.Context) (model.Change, error) {
 func (a *Cmd) Apply(ctx context.Context) error {
 	argv := a.RunCmd
 	if a.Sudo {
-		argv = append([]string{"sudo"}, argv...)
+		argv = append([]string{"sudo", "-n"}, argv...)
 	}
 
 	if output, err := a.Runner.Run(ctx, argv[0], argv[1:]...); err != nil {

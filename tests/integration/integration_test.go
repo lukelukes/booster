@@ -396,3 +396,46 @@ tasks:
 		})
 	}
 }
+
+func TestOSFamilyInWhenAndArgs(t *testing.T) {
+	dir := t.TempDir()
+
+	configPath := filepath.Join(dir, "bootstrap.yaml")
+	content := fmt.Sprintf(`version: "1"
+tasks:
+  - action: dir.create
+    when: ${ os_family == "darwin" }
+    args:
+      - %[1]s/${ os_family }-${ os }
+  - action: dir.create
+    when: ${ os_family == "linux" }
+    args:
+      - %[1]s/linux-only
+`, dir)
+	require.NoError(t, os.WriteFile(configPath, []byte(content), 0o644))
+
+	cfg, err := config.Load(configPath)
+	require.NoError(t, err)
+
+	exprCtx := expr.NewContext()
+	exprCtx.OS = "darwin"
+	exprCtx.OSFamily = "darwin"
+
+	tasks, err := task.DefaultBuilder(exprCtx).Build(cfg.Tasks)
+	require.NoError(t, err)
+	require.Len(t, tasks, 2)
+
+	result1, ok := runNextTask(t, tasks, 0)
+	require.True(t, ok)
+	assert.Equal(t, task.StatusDone, result1.Status)
+
+	result2, ok := runNextTask(t, tasks, 1)
+	require.True(t, ok)
+	assert.Equal(t, task.StatusSkipped, result2.Status)
+
+	_, err = os.Stat(filepath.Join(dir, "darwin-darwin"))
+	assert.NoError(t, err, "interpolated darwin directory should exist")
+
+	_, err = os.Stat(filepath.Join(dir, "linux-only"))
+	assert.True(t, os.IsNotExist(err), "linux directory should NOT exist")
+}

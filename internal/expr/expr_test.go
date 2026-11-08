@@ -1,6 +1,7 @@
 package expr
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -175,6 +176,10 @@ func TestContext_WithProfile(t *testing.T) {
 	got, err := v.Resolve(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, "work", got)
+}
+
+func TestContext_OSFamily(t *testing.T) {
+	assert.Equal(t, runtime.GOOS, mustResolveValue(t, NewContext(), "${ os_family }"))
 }
 
 func TestContext_EnvAccess(t *testing.T) {

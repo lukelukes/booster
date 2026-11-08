@@ -394,6 +394,19 @@ func TestBuilder_Build_ResolvesArgsBeforeFactory_TableDriven(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "match selects a branch whose values are then resolved",
+			args: map[string]any{
+				"dirs": map[string]any{
+					"match": map[string]any{
+						"on":      "${ home }",
+						"cases":   map[string]any{"/tmp/home": []any{"${ home }/a"}},
+						"default": []any{},
+					},
+				},
+			},
+			want: map[string]any{"dirs": []any{"/tmp/home/a"}},
+		},
 	}
 
 	for _, tt := range tests {
@@ -453,6 +466,24 @@ func TestBuilder_Build_ArgResolutionContracts_TableDriven(t *testing.T) {
 				}),
 			},
 			wantErr: "task 1 (capture): args.items[0].name: invalid expression",
+		},
+		{
+			name: "match without a matching case or default names the task and path",
+			builder: NewBuilder().
+				WithExprContext(&expr.Context{OS: "ubuntu"}).
+				Register("capture", func(args any) ([]Task, error) {
+					return nil, nil
+				}),
+			task: config.Task{
+				Action: "capture",
+				Args: argsNode(t, []any{
+					map[string]any{"match": map[string]any{
+						"on":    "${ os }",
+						"cases": map[string]any{"arch": "pacman"},
+					}},
+				}),
+			},
+			wantErr: `task 1 (capture): args[0].match: no case for "ubuntu" and no default`,
 		},
 	}
 

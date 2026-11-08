@@ -1,6 +1,7 @@
 package config
 
 import (
+	"booster/internal/expr"
 	"os"
 	"path/filepath"
 	"testing"
@@ -414,12 +415,16 @@ tasks: []
 				name, ok := cfg.Variables["Name"]
 				require.True(t, ok)
 				assert.Equal(t, "Your full name", name.Prompt)
-				assert.Empty(t, name.Default)
+				nameDefault, err := name.ResolveDefault(&expr.Context{})
+				require.NoError(t, err)
+				assert.Empty(t, nameDefault)
 
 				email, ok := cfg.Variables["Email"]
 				require.True(t, ok)
 				assert.Equal(t, "Your email", email.Prompt)
-				assert.Equal(t, "user@example.com", email.Default)
+				emailDefault, err := email.ResolveDefault(&expr.Context{})
+				require.NoError(t, err)
+				assert.Equal(t, "user@example.com", emailDefault)
 			},
 		},
 		{
@@ -448,6 +453,84 @@ tasks: []
 			cfg, err := loadConfigFromContent(t, tt.content)
 			require.NoError(t, err)
 			tt.check(t, cfg)
+		})
+	}
+}
+
+func TestVariableDef_ResolveDefault(t *testing.T) {
+	tests := []struct {
+		name    string
+		def     string
+		want    string
+		wantErr string
+	}{
+		{
+			name: "picks a default with match",
+			def: `
+prompt: Git email
+default:
+  match:
+    on: ${ profile }
+    cases:
+      work: me@work.example.com
+    default: me@example.com
+`,
+			want: "me@work.example.com",
+		},
+		{
+			name: "falls back to the match default",
+			def: `
+prompt: Git email
+default:
+  match:
+    on: ${ os }
+    cases:
+      arch: me@arch.example.com
+    default: me@example.com
+`,
+			want: "me@example.com",
+		},
+		{
+			name: "reports a match with no case and no default",
+			def: `
+prompt: Git email
+default:
+  match:
+    on: ${ os }
+    cases:
+      arch: me@arch.example.com
+`,
+			wantErr: `default.match: no case for "darwin" and no default`,
+		},
+		{
+			name: "rejects a non-scalar default",
+			def: `
+prompt: Git email
+default:
+  match:
+    on: ${ os }
+    cases:
+      darwin: [a, b]
+`,
+			wantErr: "default: expected a scalar value, got a sequence",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var def VariableDef
+			require.NoError(t, yaml.Unmarshal([]byte(tt.def), &def))
+
+			got, err := def.ResolveDefault(&expr.Context{OS: "darwin", Profile: "work"})
+
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

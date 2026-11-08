@@ -1,6 +1,7 @@
 package action
 
 import (
+	"booster/internal/expr"
 	"booster/internal/model"
 	"context"
 	"errors"
@@ -193,6 +194,27 @@ func TestNewPkgInstall(t *testing.T) {
 		assert.Equal(t, []string{"ghostty"}, pkg.Casks)
 		assert.IsType(t, &HomebrewManager{}, pkg.Manager)
 		assert.False(t, pkg.NeedsSudo())
+	})
+
+	t.Run("accepts a match-selected mix of packages and casks", func(t *testing.T) {
+		args, err := expr.ResolveMatches(argsNode(t, `
+match:
+  on: ${ os }
+  cases:
+    arch: [git-delta, ghostty]
+    darwin:
+      - packages: [delta, gh]
+      - casks: [ghostty]
+  default: []
+`), &expr.Context{OS: "darwin"})
+		require.NoError(t, err)
+
+		created, err := NewPkgInstall(args, &expr.Context{OS: "darwin"}, nil)
+
+		require.NoError(t, err)
+		pkg := created.(*PkgInstall)
+		assert.Equal(t, []string{"delta", "gh"}, pkg.Packages)
+		assert.Equal(t, []string{"ghostty"}, pkg.Casks)
 	})
 
 	t.Run("uses pacman off darwin", func(t *testing.T) {

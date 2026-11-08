@@ -46,12 +46,13 @@ func (c *RunCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	vars, err := resolveVariables(cfg.Variables)
+	exprCtx := expr.NewContext().WithProfile(profile)
+
+	vars, err := resolveVariables(cfg.Variables, exprCtx)
 	if err != nil {
 		return fmt.Errorf("resolve variables: %w", err)
 	}
 
-	exprCtx := expr.NewContext().WithProfile(profile)
 	sysOS := exprCtx.OS
 	varsAny := make(map[string]any, len(vars))
 	for k, v := range vars {
@@ -128,17 +129,21 @@ func (c *RunCmd) Run(cli *CLI) error {
 	return nil
 }
 
-func resolveVariables(cfgVars map[string]config.VariableDef) (map[string]string, error) {
+func resolveVariables(cfgVars map[string]config.VariableDef, ctx *expr.Context) (map[string]string, error) {
 	if len(cfgVars) == 0 {
 		return make(map[string]string), nil
 	}
 
 	var defs []variable.Definition
 	for name, v := range cfgVars {
+		def, err := v.ResolveDefault(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("variable %q: %w", name, err)
+		}
 		defs = append(defs, variable.Definition{
 			Name:    name,
 			Prompt:  v.Prompt,
-			Default: v.Default,
+			Default: def,
 		})
 	}
 

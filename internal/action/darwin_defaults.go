@@ -31,11 +31,7 @@ type DarwinDefaults struct {
 	Entries []DefaultsEntry
 }
 
-func NewDarwinDefaults(args yaml.Node, ctx *expr.Context) (Action, error) {
-	return newDarwinDefaults(args, ctx, cmdexec.DefaultRunner())
-}
-
-func newDarwinDefaults(args yaml.Node, ctx *expr.Context, runner cmdexec.Runner) (Action, error) {
+func NewDarwinDefaults(args yaml.Node, ctx *expr.Context, runner cmdexec.Runner) (Action, error) {
 	if ctx.OS != "darwin" {
 		return nil, ErrNotApplicable
 	}
@@ -154,7 +150,10 @@ func (a *DarwinDefaults) Check(ctx context.Context) (model.Change, error) {
 	change := model.Change{Verb: "set", Total: len(a.Entries)}
 
 	for _, entry := range a.Entries {
-		current, exists := a.read(ctx, entry)
+		current, exists, err := a.read(ctx, entry)
+		if err != nil {
+			return model.Change{}, err
+		}
 		if exists && current == entry.Value {
 			continue
 		}
@@ -174,7 +173,11 @@ func (a *DarwinDefaults) Check(ctx context.Context) (model.Change, error) {
 
 func (a *DarwinDefaults) Apply(ctx context.Context) error {
 	for _, entry := range a.Entries {
-		if current, exists := a.read(ctx, entry); exists && current == entry.Value {
+		current, exists, err := a.read(ctx, entry)
+		if err != nil {
+			return err
+		}
+		if exists && current == entry.Value {
 			continue
 		}
 
@@ -187,20 +190,28 @@ func (a *DarwinDefaults) Apply(ctx context.Context) error {
 	return nil
 }
 
-func (a *DarwinDefaults) read(ctx context.Context, entry DefaultsEntry) (string, bool) {
+func (a *DarwinDefaults) read(ctx context.Context, entry DefaultsEntry) (string, bool, error) {
 	output, err := a.Runner.Run(ctx, "defaults", "read", entry.Domain, entry.Key)
 	if err != nil {
-		return "", false
+		if missingDefault(err, output) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("read %s: %w: %s", entry.name(), err, strings.TrimSpace(string(output)))
 	}
 
-	current := strings.TrimSpace(string(output))
+	current := strings.TrimSuffix(string(output), "\n")
 	if entry.Type == "string" {
-		return current, true
+		return current, true, nil
 	}
 
 	normalized, err := normalizeDefault(entry.Type, current)
 	if err != nil {
-		return current, true
+		return current, true, nil
 	}
-	return normalized, true
+	return normalized, true, nil
+}
+
+func missingDefault(err error, output []byte) bool {
+	var exit interface{ ExitCode() int }
+	return errors.As(err, &exit) && exit.ExitCode() == 1 && strings.Contains(string(output), "does not exist")
 }

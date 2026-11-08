@@ -17,7 +17,7 @@ Each entry in `tasks` is an object with the following fields:
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `action` | string | Yes | Action to execute. One of: `dir.create`, `symlink.create`, `template.render`, `pkg.install`, `pkg-manager.install`, `mise.use`, `git.config`, `set.darwin.defaults`. See [Actions Reference](actions.md). |
+| `action` | string | Yes | Action to execute. One of: `dir.create`, `symlink.create`, `template.render`, `pkg.install`, `pkg-manager.install`, `mise.use`, `git.config`, `set.darwin.defaults`, `cmd`. See [Actions Reference](actions.md). |
 | `args` | varies | Depends on action | Action-specific arguments. See [Actions Reference](actions.md). |
 | `when` | string | No | Expression string in `${ ... }` form. The task runs only when the expression evaluates to true. See [Expressions Reference](expressions.md). |
 

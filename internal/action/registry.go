@@ -24,6 +24,7 @@ func NewRegistry(runner cmdexec.Runner) map[string]Factory {
 		"mise.use":            host.miseUse,
 		"git.config":          host.gitConfig,
 		"set.darwin.defaults": host.darwinDefaults,
+		"cmd":                 host.cmd,
 	}
 }
 
@@ -66,4 +67,8 @@ func (h *host) gitConfig(args yaml.Node, ctx *expr.Context) (Action, error) {
 
 func (h *host) darwinDefaults(args yaml.Node, ctx *expr.Context) (Action, error) {
 	return NewDarwinDefaults(args, ctx, h.runner)
+}
+
+func (h *host) cmd(args yaml.Node, ctx *expr.Context) (Action, error) {
+	return NewCmd(args, ctx, h.runner)
 }

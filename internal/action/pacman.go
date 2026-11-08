@@ -72,7 +72,7 @@ func (m *PacmanManager) Install(ctx context.Context, pkgs []string) (string, err
 		}
 	}
 
-	name, args := "sudo", []string{"pacman", "-S", "--noconfirm", "--needed"}
+	name, args := "sudo", []string{"-n", "pacman", "-S", "--noconfirm", "--needed"}
 	switch helper := m.helper(); helper {
 	case "paru":
 		name, args = helper, []string{"-S", "--noconfirm", "--needed", "--skipreview"}

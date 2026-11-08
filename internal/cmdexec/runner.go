@@ -38,7 +38,7 @@ func (r *RealRunner) Run(ctx context.Context, name string, args ...string) ([]by
 		return nil, err
 	}
 	cmd := exec.Command(name, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.WaitDelay = killGrace + time.Second
 	var out bytes.Buffer
 
@@ -84,6 +84,7 @@ func terminateOnCancel(ctx context.Context, pgid int, waited <-chan struct{}) bo
 	case <-ctx.Done():
 	}
 	_ = signalGroup(pgid, syscall.SIGTERM)
+	_ = signalGroup(pgid, syscall.SIGCONT)
 	select {
 	case <-waited:
 	case <-time.After(killGrace):

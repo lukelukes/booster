@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -169,20 +171,43 @@ func TestRealRunner_StopsChildrenLeftBehindByAnExitedParent(t *testing.T) {
 	}
 }
 
-func TestRealRunner_CommandsHaveNoControllingTerminal(t *testing.T) {
-	done := make(chan error, 1)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	go func() {
-		_, err := DefaultRunner().Run(ctx, "sh", "-c", `read -r line </dev/tty`)
-		done <- err
-	}()
+func TestRealRunner_CancelEndsACommandStoppedByTerminalAccess(t *testing.T) {
+	tests := []struct {
+		name   string
+		script string
+		within time.Duration
+	}{
+		{name: "exits on SIGTERM once continued", script: `echo $$; kill -TTIN $$; sleep 1000`, within: time.Second},
+		{name: "ignores SIGTERM", script: `trap '' TERM; echo $$; kill -TTIN $$; sleep 1000`, within: killGrace + time.Second},
+	}
 
-	select {
-	case err := <-done:
-		require.Error(t, err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("a command reading the terminal blocked instead of failing")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pids := make(chan string, 1)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ctx = WithLineSink(ctx, func(line string) { pids <- line })
+			done := make(chan error, 1)
+			go func() {
+				_, err := DefaultRunner().Run(ctx, "sh", "-c", tt.script)
+				done <- err
+			}()
+			pid := readPID(t, pids)
+			t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
+			require.Eventually(t, func() bool {
+				out, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+				return err == nil && strings.HasPrefix(strings.TrimSpace(string(out)), "T")
+			}, 5*time.Second, 10*time.Millisecond, "the command never stopped")
+
+			cancel()
+
+			select {
+			case err := <-done:
+				require.Error(t, err)
+			case <-time.After(tt.within):
+				t.Fatal("Run kept waiting on a stopped command after the context was cancelled")
+			}
+		})
 	}
 }
 

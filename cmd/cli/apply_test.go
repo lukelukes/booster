@@ -1,6 +1,7 @@
 package main
 
 import (
+	"booster/internal/action"
 	"booster/internal/cmdexec"
 	"booster/internal/model"
 	"booster/internal/run"
@@ -9,12 +10,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
 type applyFixture struct {
@@ -296,6 +299,108 @@ func TestApplyCmd_RefreshesSudoOnlyWhileApplying(t *testing.T) {
 			assert.Len(t, ft.sudoTicks, 1)
 		})
 	}
+}
+
+func TestApplyCmd_SudoRunsInBoostersSessionInItsOwnGroup(t *testing.T) {
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	bin := t.TempDir()
+	for _, name := range []string{"sudo", "pacman"} {
+		require.NoError(t, os.Symlink(exe, filepath.Join(bin, name)))
+	}
+	records := filepath.Join(t.TempDir(), "sudo.log")
+	t.Setenv("PATH", bin)
+	t.Setenv(fakeSudoLogEnv, records)
+	t.Setenv("GORACE", "atexit_sleep_ms=0")
+
+	var ft fakeTerminal
+	ticks := make(chan time.Time, 1)
+	term := ft.terminal(t, "", false)
+	term.sudo = ensureSudo
+	term.sudoRunner = cmdexec.DefaultRunner()
+	term.sudoTicks = ticks
+	plan := run.PlanResult{Steps: []run.Planned{
+		ft.planned("pkgs", model.Change{Kind: model.ChangeCreate, Verb: "install", NeedsSudo: true}),
+	}}
+	plan.Steps[0].Action.(*fakeAction).onApply = func() error {
+		ticks <- time.Time{}
+		assert.Eventually(t, func() bool {
+			return len(readSudoRecords(t, records)) == 2
+		}, 5*time.Second, 10*time.Millisecond, "sudo was not refreshed while applying")
+		_, err := action.NewPacmanManager(cmdexec.DefaultRunner()).Install(t.Context(), []string{"fd"})
+		return err
+	}
+
+	require.NoError(t, (&ApplyCmd{Yes: true}).applyPlan(t.Context(), plan, term))
+
+	got := readSudoRecords(t, records)
+	require.Len(t, got, 3)
+	assert.Equal(t, []string{"-n true", "-n -v", "-n pacman -S --noconfirm --needed fd"},
+		[]string{got[0].args, got[1].args, got[2].args})
+	session, err := unix.Getsid(0)
+	require.NoError(t, err)
+	for _, r := range got {
+		assert.Equal(t, session, r.sid, "sudo %s ran outside booster's session", r.args)
+	}
+	for _, r := range got[1:] {
+		assert.Equal(t, r.pid, r.pgid, "sudo %s does not lead its own process group", r.args)
+		assert.NotEqual(t, unix.Getpgrp(), r.pgid, "sudo %s shares booster's process group", r.args)
+	}
+}
+
+const fakeSudoLogEnv = "BOOSTER_TEST_FAKE_SUDO_LOG"
+
+func TestMain(m *testing.M) {
+	if records := os.Getenv(fakeSudoLogEnv); records != "" {
+		os.Exit(fakeSudo(records))
+	}
+	os.Exit(m.Run())
+}
+
+func fakeSudo(records string) int {
+	if filepath.Base(os.Args[0]) != "sudo" {
+		return 0
+	}
+	sid, err := unix.Getsid(0)
+	if err != nil {
+		return 1
+	}
+	f, err := os.OpenFile(records, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return 1
+	}
+	defer f.Close()
+	if _, err := fmt.Fprintf(f, "%d %d %d %s\n", sid, unix.Getpgrp(), os.Getpid(), strings.Join(os.Args[1:], " ")); err != nil {
+		return 1
+	}
+	return 0
+}
+
+type sudoRecord struct {
+	sid, pgid, pid int
+	args           string
+}
+
+func readSudoRecords(t *testing.T, path string) []sudoRecord {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	require.NoError(t, err)
+	var records []sudoRecord
+	for line := range strings.Lines(string(data)) {
+		var r sudoRecord
+		fields := strings.SplitN(strings.TrimSpace(line), " ", 4)
+		require.Len(t, fields, 4)
+		for i, n := range []*int{&r.sid, &r.pgid, &r.pid} {
+			*n, err = strconv.Atoi(fields[i])
+			require.NoError(t, err)
+		}
+		r.args = fields[3]
+		records = append(records, r)
+	}
+	return records
 }
 
 func TestApplyCmd_SudoRefusedAppliesNothing(t *testing.T) {

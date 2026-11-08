@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -23,12 +24,12 @@ type GitConfig struct {
 }
 
 type gitConfigArgs struct {
-	Key    string   `yaml:"key"`
-	Value  expr.Str `yaml:"value"`
-	Prompt string   `yaml:"prompt"`
+	Key    string    `yaml:"key"`
+	Value  *expr.Str `yaml:"value"`
+	Prompt string    `yaml:"prompt"`
 }
 
-func NewGitConfig(args yaml.Node, ctx *expr.Context) (Action, error) {
+func NewGitConfig(args yaml.Node, ctx *expr.Context, runner cmdexec.Runner) (Action, error) {
 	if args.IsZero() || args.Kind != yaml.SequenceNode {
 		return nil, errors.New("args must be a list of {key, value} entries")
 	}
@@ -52,7 +53,7 @@ func NewGitConfig(args yaml.Node, ctx *expr.Context) (Action, error) {
 		if item.Prompt != "" {
 			return nil, fmt.Errorf("[%d]: 'prompt' is no longer supported; define a variable with a prompt and use value: ${ vars.<name> }", i)
 		}
-		if item.Value == "" {
+		if item.Value == nil {
 			return nil, fmt.Errorf("[%d]: missing 'value'", i)
 		}
 
@@ -64,7 +65,7 @@ func NewGitConfig(args yaml.Node, ctx *expr.Context) (Action, error) {
 		entries = append(entries, GitConfigEntry{Key: item.Key, Value: value})
 	}
 
-	return &GitConfig{Runner: cmdexec.DefaultRunner(), Entries: entries}, nil
+	return &GitConfig{Runner: runner, Entries: entries}, nil
 }
 
 func (a *GitConfig) Name() string {
@@ -80,13 +81,16 @@ func (a *GitConfig) Check(ctx context.Context) (model.Change, error) {
 	}
 
 	for _, entry := range a.Entries {
-		current := a.current(ctx, entry.Key)
-		if current == entry.Value {
+		current, exists, err := a.current(ctx, entry.Key)
+		if err != nil {
+			return model.Change{}, err
+		}
+		if exists && current == entry.Value {
 			continue
 		}
 
 		change.Items = append(change.Items, model.Item{Name: entry.Key, From: current, To: entry.Value})
-		if current != "" {
+		if exists {
 			change.Kind = model.ChangeUpdate
 		}
 	}
@@ -104,7 +108,11 @@ func (a *GitConfig) Apply(ctx context.Context) error {
 	}
 
 	for _, entry := range a.Entries {
-		if a.current(ctx, entry.Key) == entry.Value {
+		current, exists, err := a.current(ctx, entry.Key)
+		if err != nil {
+			return err
+		}
+		if exists && current == entry.Value {
 			continue
 		}
 
@@ -121,11 +129,14 @@ func (a *GitConfig) available() bool {
 	return err == nil
 }
 
-func (a *GitConfig) current(ctx context.Context, key string) string {
+func (a *GitConfig) current(ctx context.Context, key string) (string, bool, error) {
 	output, err := a.Runner.Run(ctx, "git", "config", "--global", "--get", key)
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && exitErr.ExitCode() == 1 {
+		return "", false, nil
+	}
 	if err != nil {
-		return ""
+		return "", false, fmt.Errorf("read git config %s: %w: %s", key, err, strings.TrimSpace(string(output)))
 	}
 
-	return strings.TrimSpace(string(output))
+	return strings.TrimSuffix(string(output), "\n"), true, nil
 }

@@ -162,7 +162,7 @@ Sets global git configuration values. Only keys whose current value differs are 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `key` | string | yes | Git config key |
-| `value` | string | yes | Value to set. Supports expressions. |
+| `value` | string | yes | Value to set, kept exactly as written; `""` sets an empty value. Supports expressions. |
 
 The action never prompts during a run. For values that differ per person or machine, define a [variable](config.md) with a `prompt` and reference it in `value`. Booster asks for variables before the run starts and remembers the answers.
 

@@ -228,3 +228,46 @@ defaults:
     type: int
     value: 48
 ```
+
+---
+
+## `cmd`
+
+Runs a command of your own. Use it for setup steps that no other action covers.
+
+**Args:** object
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `check` | array of strings | no | Command that tells whether the step is already done. Exit code 0 means done. |
+| `run` | array of strings | yes | Command to run when `check` fails. |
+| `sudo` | bool | no | Run `run` with `sudo`. Booster asks for the sudo password once, before the run starts. Default `false`. |
+
+Both commands are argv lists: the first element is the program, the rest are its arguments. No shell runs them, so pipes, globs and `$VARS` are not expanded. Use `[sh, -c, "..."]` when you need a shell. Expressions resolve in every element.
+
+The plan shows the step as up to date when `check` exits 0, and as a change when it exits with any other code or cannot start. `check` always runs without `sudo`. Without `check`, booster cannot tell whether the step is done, so the plan shows it as `?` (known after apply) and every apply runs it. Output from `run` goes through the same runner as the other actions. A non-zero exit from `run` fails the step, and the error includes the command's output.
+
+`cmd` works with `booster plan` and `booster apply` only.
+
+**Examples:**
+
+```yaml
+- name: xcode-clt
+  action: cmd
+  when: ${ os == "darwin" }
+  args: { check: [xcode-select, -p], run: [xcode-select, --install] }
+
+- name: zsh-login-shell
+  action: cmd
+  args:
+    check: [sh, -c, 'test "$(basename "$SHELL")" = zsh']
+    run: [chsh, -s, '${ which("zsh") }', "${ env.USER }"]
+    sudo: true
+
+- name: xcode
+  action: cmd
+  when: ${ os == "darwin" }
+  args:
+    check: [sh, -c, "mas list | grep -q '^497799835 '"]
+    run: [mas, install, "497799835"]
+```

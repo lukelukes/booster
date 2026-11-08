@@ -14,6 +14,8 @@ func TestProgress(t *testing.T) {
 	events := []model.Event{
 		model.RunStart{Total: 4},
 		model.TaskStart{Index: 0, Name: "dirs", Change: create},
+		model.TaskOutput{Index: 0, Line: "mkdir /a"},
+		model.TaskOutput{Index: 0, Line: ""},
 		model.TaskDone{Index: 0, Result: model.Result{Status: model.StatusChanged, Change: create}},
 		model.TaskStart{Index: 1, Name: "links", Change: model.Change{Verb: "link", Total: 1}},
 		model.TaskDone{Index: 1, Result: model.Result{Status: model.StatusOK}},
@@ -38,6 +40,8 @@ func TestProgress(t *testing.T) {
 	assert.Equal(t, `
 applying 4 steps
 → dirs
+  │ mkdir /a
+  │
 + dirs  changed
 ✓ links  up to date
 → more dirs

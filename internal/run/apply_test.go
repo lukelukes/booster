@@ -1,6 +1,7 @@
 package run
 
 import (
+	"booster/internal/cmdexec"
 	"booster/internal/model"
 	"context"
 	"errors"
@@ -92,4 +93,39 @@ func TestApply_EmptyPlan(t *testing.T) {
 func withoutDuration(s model.Summary) model.Summary {
 	s.Duration = 0
 	return s
+}
+
+type printingAction struct {
+	fakeAction
+	script string
+}
+
+func (p *printingAction) Apply(ctx context.Context) error {
+	p.applied++
+	_, err := cmdexec.DefaultRunner().Run(ctx, "sh", "-c", p.script)
+	return err
+}
+
+func TestApply_StreamsCommandOutputBetweenStartAndDone(t *testing.T) {
+	create := model.Change{Kind: model.ChangeCreate, Verb: "install", Total: 1}
+	var rec recorder
+
+	Apply(context.Background(), planOf(
+		Planned{PlannedStep: model.PlannedStep{Name: "tools", Change: create}, Action: &printingAction{script: "echo resolving; echo 'warning: x' >&2; echo done"}},
+		Planned{PlannedStep: model.PlannedStep{Name: "apps", Change: create}, Action: &printingAction{script: "echo fetched; exit 1"}},
+	), rec.emit)
+
+	require.Len(t, rec.events, 10)
+	assert.Equal(t, []model.Event{
+		model.TaskStart{Index: 0, Name: "tools", Change: create},
+		model.TaskOutput{Index: 0, Line: "resolving"},
+		model.TaskOutput{Index: 0, Line: "warning: x"},
+		model.TaskOutput{Index: 0, Line: "done"},
+		model.TaskDone{Index: 0, Result: model.Result{Status: model.StatusChanged, Change: create}},
+		model.TaskStart{Index: 1, Name: "apps", Change: create},
+		model.TaskOutput{Index: 1, Line: "fetched"},
+	}, rec.events[1:8])
+	done, ok := rec.events[8].(model.TaskDone)
+	require.True(t, ok)
+	assert.Equal(t, model.StatusFailed, done.Result.Status)
 }

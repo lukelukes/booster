@@ -1,6 +1,7 @@
 package main
 
 import (
+	"booster/internal/cmdexec"
 	"booster/internal/model"
 	"booster/internal/run"
 	"context"
@@ -52,14 +53,20 @@ tasks:
 
 type fakeTerminal struct {
 	out     strings.Builder
+	logDir  string
 	events  []string
 	sudoErr error
 }
 
-func (ft *fakeTerminal) terminal(input string, interactive bool) terminal {
+func (ft *fakeTerminal) terminal(t *testing.T, input string, interactive bool) terminal {
+	t.Helper()
+	if ft.logDir == "" {
+		ft.logDir = t.TempDir()
+	}
 	return terminal{
 		in:          strings.NewReader(input),
 		out:         &ft.out,
+		logDir:      ft.logDir,
 		interactive: interactive,
 		sudo: func() error {
 			ft.events = append(ft.events, "sudo")
@@ -132,7 +139,7 @@ func TestApplyCmd(t *testing.T) {
 			f := newApplyFixture(t)
 			var ft fakeTerminal
 
-			err := (&ApplyCmd{Yes: tt.yes}).run(f.cli, ft.terminal(tt.input, tt.interactive))
+			err := (&ApplyCmd{Yes: tt.yes}).run(f.cli, ft.terminal(t, tt.input, tt.interactive))
 
 			if tt.wantErr != nil {
 				require.ErrorIs(t, err, tt.wantErr)
@@ -158,10 +165,10 @@ func TestApplyCmd(t *testing.T) {
 
 func TestApplyCmd_UpToDateDoesNotAsk(t *testing.T) {
 	f := newApplyFixture(t)
-	require.NoError(t, (&ApplyCmd{Yes: true}).run(f.cli, new(fakeTerminal).terminal("", false)))
+	require.NoError(t, (&ApplyCmd{Yes: true}).run(f.cli, new(fakeTerminal).terminal(t, "", false)))
 	var ft fakeTerminal
 
-	err := (&ApplyCmd{}).run(f.cli, ft.terminal("", false))
+	err := (&ApplyCmd{}).run(f.cli, ft.terminal(t, "", false))
 
 	require.NoError(t, err)
 	assert.Contains(t, ft.out.String(), "0 to change · 2 up to date")
@@ -180,7 +187,7 @@ func TestApplyCmd_FailedStepStopsTheRun(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(home, 0o755) })
 	var ft fakeTerminal
 
-	err := (&ApplyCmd{Yes: true}).run(f.cli, ft.terminal("", false))
+	err := (&ApplyCmd{Yes: true}).run(f.cli, ft.terminal(t, "", false))
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "1 of 2 steps failed")
@@ -195,7 +202,7 @@ func TestApplyCmd_AsksForSudoOnceBeforeApplying(t *testing.T) {
 	needsSudo := model.Change{Kind: model.ChangeCreate, Verb: "install", NeedsSudo: true}
 	plan := run.PlanResult{Steps: []run.Planned{ft.planned("a", needsSudo), ft.planned("b", needsSudo)}}
 
-	err := (&ApplyCmd{Yes: true}).applyPlan(plan, ft.terminal("", false))
+	err := (&ApplyCmd{Yes: true}).applyPlan(plan, ft.terminal(t, "", false))
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"sudo", "apply a", "apply b"}, ft.events)
@@ -207,9 +214,51 @@ func TestApplyCmd_SudoRefusedAppliesNothing(t *testing.T) {
 		ft.planned("a", model.Change{Kind: model.ChangeCreate, NeedsSudo: true}),
 	}}
 
-	err := (&ApplyCmd{Yes: true}).applyPlan(plan, ft.terminal("", false))
+	err := (&ApplyCmd{Yes: true}).applyPlan(plan, ft.terminal(t, "", false))
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "wrong password")
 	assert.Equal(t, []string{"sudo"}, ft.events)
+}
+
+type outputAction struct{}
+
+func (outputAction) Name() string    { return "fake" }
+func (outputAction) NeedsSudo() bool { return false }
+
+func (outputAction) Check(context.Context) (model.Change, error) {
+	return model.Change{Kind: model.ChangeCreate, Verb: "install", Total: 1}, nil
+}
+
+func (outputAction) Apply(ctx context.Context) error {
+	_, err := cmdexec.DefaultRunner().Run(ctx, "sh", "-c", "echo downloading jq; echo installed jq >&2")
+	return err
+}
+
+func TestApplyCmd_StreamsOutputAndWritesALog(t *testing.T) {
+	ft := fakeTerminal{logDir: filepath.Join(t.TempDir(), "state", "booster", "logs")}
+	plan, err := run.Plan(context.Background(), run.Compiled{Steps: []run.Step{{Name: "tools", Action: outputAction{}}}})
+	require.NoError(t, err)
+
+	require.NoError(t, (&ApplyCmd{Yes: true}).applyPlan(plan, ft.terminal(t, "", false)))
+
+	out := ft.out.String()
+	assert.Contains(t, out, "→ tools\n  │ downloading jq\n  │ installed jq\n+ tools  changed")
+	logs, err := filepath.Glob(filepath.Join(ft.logDir, "*.log"))
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	assert.Contains(t, out, "log: "+logs[0])
+	content, err := os.ReadFile(logs[0])
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "1 to change")
+	assert.Contains(t, string(content), "  │ downloading jq\n  │ installed jq\n+ tools  changed")
+}
+
+func TestLogDir(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", "/xdg/state")
+	assert.Equal(t, filepath.Join("/xdg/state", "booster", "logs"), logDir())
+
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("HOME", "/home/someone")
+	assert.Equal(t, filepath.Join("/home/someone", ".local", "state", "booster", "logs"), logDir())
 }

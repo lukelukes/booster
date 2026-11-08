@@ -1,6 +1,7 @@
 package run
 
 import (
+	"booster/internal/cmdexec"
 	"booster/internal/model"
 	"context"
 	"time"
@@ -18,7 +19,9 @@ func Apply(ctx context.Context, plan PlanResult, emit func(model.Event)) model.S
 			result = model.Result{Status: model.StatusSkipped, Change: p.Change, Reason: "not run"}
 		} else {
 			emit(model.TaskStart{Index: i, Name: p.Name, Change: p.Change})
-			result = applyStep(ctx, p)
+			result = applyStep(cmdexec.WithLineSink(ctx, func(line string) {
+				emit(model.TaskOutput{Index: i, Line: line})
+			}), p)
 			failed = result.Status == model.StatusFailed
 		}
 		count(&summary, result.Status)

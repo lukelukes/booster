@@ -1,6 +1,7 @@
 package main
 
 import (
+	"booster/internal/model"
 	"booster/internal/run"
 	"booster/internal/ui"
 	"bufio"
@@ -9,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mattn/go-isatty"
 )
@@ -24,12 +27,13 @@ type ApplyCmd struct {
 type terminal struct {
 	in          io.Reader
 	out         io.Writer
+	logDir      string
 	interactive bool
 	sudo        func() error
 }
 
 func (c *ApplyCmd) Run(cli *CLI) error {
-	return c.run(cli, terminal{in: os.Stdin, out: os.Stdout, interactive: isTerminal(os.Stdin), sudo: ensureSudo})
+	return c.run(cli, terminal{in: os.Stdin, out: os.Stdout, logDir: logDir(), interactive: isTerminal(os.Stdin), sudo: ensureSudo})
 }
 
 func (c *ApplyCmd) run(cli *CLI, term terminal) error {
@@ -62,7 +66,21 @@ func (c *ApplyCmd) applyPlan(plan run.PlanResult, term terminal) error {
 		}
 	}
 
-	summary := run.Apply(context.Background(), plan, ui.Progress(term.out, view))
+	log, err := openLog(term.logDir)
+	if err != nil {
+		return err
+	}
+	defer log.Close()
+	if err := ui.RenderPlan(log, view); err != nil {
+		return err
+	}
+
+	screen, logged := ui.Progress(term.out, view), ui.Progress(log, view)
+	summary := run.Apply(context.Background(), plan, func(e model.Event) {
+		screen(e)
+		logged(e)
+	})
+	fmt.Fprintf(term.out, "log: %s\n", log.Name())
 	if summary.Failed > 0 {
 		return fmt.Errorf("apply: %d of %d steps failed", summary.Failed, summary.Total)
 	}
@@ -87,6 +105,29 @@ func confirm(term terminal) (bool, error) {
 		fmt.Fprintln(term.out, "cancelled, nothing changed")
 		return false, nil
 	}
+}
+
+func logDir() string {
+	stateHome := os.Getenv("XDG_STATE_HOME")
+	if stateHome == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			home = "."
+		}
+		stateHome = filepath.Join(home, ".local", "state")
+	}
+	return filepath.Join(stateHome, "booster", "logs")
+}
+
+func openLog(dir string) (*os.File, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("create log dir: %w", err)
+	}
+	f, err := os.CreateTemp(dir, "apply-"+time.Now().Format("20060102-150405")+"-*.log")
+	if err != nil {
+		return nil, fmt.Errorf("create log file: %w", err)
+	}
+	return f, nil
 }
 
 func isTerminal(f *os.File) bool {

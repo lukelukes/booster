@@ -23,6 +23,8 @@ func Progress(w io.Writer, plan model.Plan) func(model.Event) {
 			if e.Change.Kind != model.ChangeNone {
 				fmt.Fprintf(w, "→ %s\n", e.Name)
 			}
+		case model.TaskOutput:
+			fmt.Fprintln(w, strings.TrimRight("  │ "+e.Line, " "))
 		case model.TaskDone:
 			fmt.Fprintf(w, "%s %s  %s\n", resultSymbol(e.Result.Status), name(e.Index), describeResult(e.Result))
 		case model.RunDone:

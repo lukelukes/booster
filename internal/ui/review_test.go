@@ -2,15 +2,17 @@ package ui
 
 import (
 	"booster/internal/model"
+	"fmt"
 	"io"
+	"strings"
 	"testing"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/golden"
-	"github.com/charmbracelet/x/exp/teatest"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -19,8 +21,6 @@ var (
 	right = tea.KeyMsg{Type: tea.KeyRight}
 	left  = tea.KeyMsg{Type: tea.KeyLeft}
 	space = tea.KeyMsg{Type: tea.KeySpace}
-	enter = tea.KeyMsg{Type: tea.KeyEnter}
-	quit  = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")}
 )
 
 var header = Header{OS: "darwin", Arch: "arm64", Profile: "personal", Config: "~/.dotfiles/bootstrap.yaml"}
@@ -103,35 +103,106 @@ func TestReview_Screens(t *testing.T) {
 	}
 }
 
-func runReview(t *testing.T, p model.Plan, keys ...tea.KeyMsg) Decision {
-	t.Helper()
-
-	tm := teatest.NewTestModel(t, newTestReview(p, ModeApply), teatest.WithInitialTermSize(100, 30))
-	for _, k := range keys {
-		tm.Send(k)
-	}
-	final := tm.FinalModel(t, teatest.WithFinalTimeout(2*time.Second))
-	return final.(review).decision
-}
-
 func TestReview_Decisions(t *testing.T) {
+	const keyDown, keySpace, keyEnter = "\x1b[B", " ", "\r"
 	tests := []struct {
 		name string
-		keys []tea.KeyMsg
+		plan model.Plan
+		mode Mode
+		keys []string
 		want Decision
 	}{
-		{name: "enter applies everything", keys: []tea.KeyMsg{enter}, want: Decision{Apply: true}},
-		{name: "skipped steps are left out", keys: []tea.KeyMsg{down, space, down, down, space, enter}, want: Decision{Apply: true, Skip: []int{1, 3}}},
-		{name: "space twice keeps the step", keys: []tea.KeyMsg{space, space, enter}, want: Decision{Apply: true}},
-		{name: "up-to-date steps cannot be skipped", keys: []tea.KeyMsg{down, down, down, down, space, enter}, want: Decision{Apply: true}},
-		{name: "skipping every change applies nothing", keys: []tea.KeyMsg{space, down, space, down, space, down, space, down, down, space, enter}, want: Decision{Skip: []int{0, 1, 2, 3, 5}}},
-		{name: "q quits without applying", keys: []tea.KeyMsg{down, space, quit}, want: Decision{}},
-		{name: "ctrl+c quits without applying", keys: []tea.KeyMsg{{Type: tea.KeyCtrlC}}, want: Decision{}},
+		{name: "enter applies everything", plan: bootstrapPlan(), keys: []string{keyEnter}, want: Decision{Apply: true}},
+		{name: "skipped steps are left out", plan: bootstrapPlan(), keys: []string{keyDown, keySpace, keyDown, keyDown, keySpace, keyEnter}, want: Decision{Apply: true, Skip: []int{1, 3}}},
+		{name: "space twice keeps the step", plan: bootstrapPlan(), keys: []string{keySpace, keySpace, keyEnter}, want: Decision{Apply: true}},
+		{name: "up-to-date steps cannot be skipped", plan: bootstrapPlan(), keys: []string{keyDown, keyDown, keyDown, keyDown, keySpace, keyEnter}, want: Decision{Apply: true}},
+		{name: "skipping every change applies nothing", plan: bootstrapPlan(), keys: []string{keySpace, keyDown, keySpace, keyDown, keySpace, keyDown, keySpace, keyDown, keyDown, keySpace, keyEnter}, want: Decision{Skip: []int{0, 1, 2, 3, 5}}},
+		{name: "q quits without applying", plan: bootstrapPlan(), keys: []string{keyDown, keySpace, "q"}, want: Decision{}},
+		{name: "ctrl+c quits without applying", plan: bootstrapPlan(), keys: []string{"\x03"}, want: Decision{}},
+		{name: "enter applies the drift fixes", plan: driftPlan(), mode: ModeDrift, keys: []string{keyDown, keySpace, keyEnter}, want: Decision{Apply: true, Skip: []int{1}}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, runReview(t, bootstrapPlan(), tt.keys...))
+			in := strings.NewReader(strings.Join(tt.keys, ""))
+
+			got, err := Review(in, io.Discard, header, tt.plan, tt.mode)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
 		})
+	}
+}
+
+func tallPlan(n int) model.Plan {
+	names := make([]string, n)
+	for i := range names {
+		names[i] = fmt.Sprintf("item-%02d", i)
+	}
+	return model.Plan{Steps: []model.PlannedStep{
+		{Name: "packages", Change: model.Change{Kind: model.ChangeCreate, Verb: "install", Total: n, Items: items(names...)}},
+		{Name: "links", Change: model.Change{Kind: model.ChangeCreate, Verb: "link", Total: 1, Items: items("~/.zshrc")}},
+	}}
+}
+
+func TestReview_EveryItemOfATallStepCanBeScrolledIntoView(t *testing.T) {
+	const height, count = 30, 50
+	m := press(newTestReview(tallPlan(count), ModeApply), tea.WindowSizeMsg{Width: 80, Height: height}, right)
+
+	seen := map[string]bool{}
+	look := func() {
+		rows := strings.Split(strings.TrimSuffix(m.View(), "\n"), "\n")
+		require.LessOrEqual(t, len(rows), height)
+		for _, r := range rows {
+			seen[strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(r), "+"))] = true
+		}
+	}
+	look()
+	for range count {
+		m = press(m, down)
+		look()
+	}
+
+	for i := range count {
+		assert.True(t, seen[fmt.Sprintf("item-%02d", i)], "item-%02d never came into view", i)
+	}
+	assert.Equal(t, 1, m.cursor, "the cursor moves on once the last item is visible")
+
+	seen = map[string]bool{}
+	for range count {
+		m = press(m, up)
+		look()
+	}
+	assert.True(t, seen["item-00"], "scrolling back up reaches the first item")
+	assert.Equal(t, 0, m.cursor)
+}
+
+func TestReview_RowsFitANarrowTerminal(t *testing.T) {
+	long := strings.Repeat("very-long-path-segment/", 6)
+	plan := model.Plan{Excluded: 2, Steps: []model.PlannedStep{
+		{Name: "a-task-name-much-longer-than-the-terminal-is-wide", Change: model.Change{Kind: model.ChangeCreate, Verb: "link", Total: 3, NeedsSudo: true, Items: []model.Item{
+			{Name: "~/" + long + "zshrc", To: long + "dotfiles/zshrc"},
+			{Name: "パッケージマネージャーの設定ファイル", From: long, To: long},
+			{Name: "fd"},
+		}}},
+		{Name: "git-config", Change: model.Change{Kind: model.ChangeUpdate, Verb: "set", Total: 1, Items: items("user.name")}},
+	}}
+	const width, height = 40, 10
+
+	for _, mode := range []Mode{ModeApply, ModeDrift} {
+		m := press(newTestReview(plan, mode), tea.WindowSizeMsg{Width: width, Height: height}, right, space)
+		for _, key := range []tea.Msg{nil, down, down, down, down} {
+			if key != nil {
+				m = press(m, key)
+			}
+			view := m.View()
+			rows := strings.Split(strings.TrimSuffix(view, "\n"), "\n")
+
+			assert.LessOrEqual(t, len(rows), height)
+			for _, r := range rows {
+				assert.LessOrEqual(t, ansi.StringWidth(r), width, "row %q", r)
+			}
+			assert.Contains(t, view, "…")
+		}
 	}
 }

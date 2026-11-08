@@ -4,10 +4,12 @@ import (
 	"booster/internal/model"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type Mode int
@@ -86,9 +88,17 @@ func (m review) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.decision = m.decide()
 			return m, tea.Quit
 		case "up", "k":
-			m.cursor = max(m.cursor-1, 0)
+			if _, first, _ := m.body(); first < m.offset {
+				m.offset--
+			} else {
+				m.cursor = max(m.cursor-1, 0)
+			}
 		case "down", "j":
-			m.cursor = min(m.cursor+1, len(m.plan.Steps)-1)
+			if _, _, last := m.body(); last >= m.offset+m.viewport() {
+				m.offset++
+			} else {
+				m.cursor = min(m.cursor+1, len(m.plan.Steps)-1)
+			}
 		case "right", "l":
 			if m.cursor < len(m.plan.Steps) && len(m.plan.Steps[m.cursor].Change.Items) > 0 {
 				m.expanded[m.cursor] = true
@@ -120,26 +130,28 @@ func (m review) decide() Decision {
 	return d
 }
 
+func (m review) viewport() int {
+	if m.height == 0 {
+		return math.MaxInt
+	}
+	return max(m.height-chromeHeight, 1)
+}
+
 func (m review) scroll() int {
 	lines, first, last := m.body()
-	avail := m.height - chromeHeight
-	if m.height == 0 || len(lines) <= avail {
+	avail := m.viewport()
+	if len(lines) <= avail {
 		return 0
 	}
-	offset := min(m.offset, len(lines)-avail)
-	if last-offset >= avail {
-		offset = last - avail + 1
-	}
-	if first < offset {
-		offset = first
-	}
-	return offset
+	low, high := last-avail+1, first
+	offset := min(max(m.offset, min(low, high)), max(low, high))
+	return min(offset, len(lines)-avail)
 }
 
 func (m review) View() string {
 	lines, _, _ := m.body()
-	if m.height > 0 && len(lines) > m.height-chromeHeight {
-		lines = lines[m.offset:min(m.offset+max(m.height-chromeHeight, 1), len(lines))]
+	if len(lines) > m.viewport() {
+		lines = lines[m.offset : m.offset+m.viewport()]
 	}
 
 	var b strings.Builder
@@ -180,7 +192,7 @@ func (m review) headerLine() string {
 func (m review) body() (lines []string, first, last int) {
 	nameWidth := minNameWidth
 	for _, s := range m.plan.Steps {
-		nameWidth = max(nameWidth, len(s.Name)+2)
+		nameWidth = max(nameWidth, lipgloss.Width(s.Name)+2)
 	}
 
 	for i, s := range m.plan.Steps {
@@ -271,7 +283,7 @@ func (m review) itemLines(items []model.Item) []string {
 	st := m.st
 	width := 0
 	for _, it := range items {
-		width = max(width, len(it.Name)+2)
+		width = max(width, lipgloss.Width(it.Name)+2)
 	}
 
 	lines := make([]string, 0, len(items))
@@ -400,7 +412,7 @@ func (m review) row(left, right []seg, selected bool) string {
 		}
 		b.WriteString(style.Render(s.text))
 	}
-	return strings.TrimRight(b.String(), " ")
+	return ansi.Truncate(strings.TrimRight(b.String(), " "), width, "…")
 }
 
 func segWidth(segs []seg) int {

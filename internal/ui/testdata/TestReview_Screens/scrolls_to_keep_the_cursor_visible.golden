@@ -2,7 +2,7 @@
 
         + ~/.zshrc                 → dotfiles/config/zshrc
         + ~/.gitconfig             → dotfiles/config/gitconfig
-        ~ ~/.config/starship.toml  ~/old/starship.toml → dotfiles/config/starship.toml
+        ~ ~/.config/starship.toml  ~/old/starship.toml → dotfiles/config/starsh…
  ▸ ✓  git-config          up to date
 
  4 to change · 1 up to date · 1 after apply                          1 excluded

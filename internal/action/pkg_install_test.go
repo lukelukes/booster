@@ -188,7 +188,7 @@ func TestNewPkgInstall(t *testing.T) {
 		created, err := NewPkgInstall(args, ctx, nil)
 
 		require.NoError(t, err)
-		pkg := created.(*PkgInstall)
+		pkg := created
 		assert.Equal(t, []string{"ripgrep", "neovim", "fd", "yq"}, pkg.Packages)
 		assert.Equal(t, []string{"ghostty"}, pkg.Casks)
 		assert.IsType(t, &HomebrewManager{}, pkg.Manager)
@@ -198,7 +198,7 @@ func TestNewPkgInstall(t *testing.T) {
 		created, err := NewPkgInstall(argsNode(t, "- ripgrep"), testContext(), nil)
 
 		require.NoError(t, err)
-		pkg := created.(*PkgInstall)
+		pkg := created
 		assert.IsType(t, &PacmanManager{}, pkg.Manager)
 	})
 

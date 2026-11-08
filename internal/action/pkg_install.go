@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -47,7 +48,7 @@ func (p *pkgInstallArgs) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func NewPkgInstall(args yaml.Node, ctx *expr.Context, runner cmdexec.Runner) (Action, error) {
+func NewPkgInstall(args yaml.Node, ctx *expr.Context, runner cmdexec.Runner) (*PkgInstall, error) {
 	if args.IsZero() || args.Kind != yaml.SequenceNode {
 		return nil, errors.New("args must be a list of package names or {packages, casks} entries")
 	}
@@ -111,6 +112,10 @@ func (a *PkgInstall) Check(ctx context.Context) (model.Change, error) {
 		return model.Change{}, err
 	}
 
+	if err := a.checkInstallable(ctx, missing); err != nil {
+		return model.Change{}, err
+	}
+
 	for _, pkg := range missing {
 		change.Items = append(change.Items, model.Item{Name: pkg})
 	}
@@ -145,6 +150,25 @@ func (a *PkgInstall) Apply(ctx context.Context) error {
 		if _, err := a.Manager.(CaskInstaller).InstallCasks(ctx, casks); err != nil {
 			return err
 		}
+	}
+
+	return nil
+}
+
+func (a *PkgInstall) checkInstallable(ctx context.Context, missing []string) error {
+	checker, ok := a.Manager.(interface {
+		Uninstallable(ctx context.Context, pkgs []string) ([]string, error)
+	})
+	if !ok {
+		return nil
+	}
+
+	uninstallable, err := checker.Uninstallable(ctx, missing)
+	if err != nil {
+		return err
+	}
+	if len(uninstallable) > 0 {
+		return fmt.Errorf("not in the pacman repos and no AUR helper is installed: %s; add a pkg-manager.install step for paru or yay before this one", strings.Join(uninstallable, ", "))
 	}
 
 	return nil

@@ -132,10 +132,10 @@ func TestPkgManagerInstall_Apply(t *testing.T) {
 
 func TestNewPkgManagerInstall(t *testing.T) {
 	t.Run("accepts the supported managers", func(t *testing.T) {
-		created, err := NewPkgManagerInstall(argsNode(t, "- paru\n- homebrew"), testContext(), aurRunner(true))
+		created, err := NewPkgManagerInstall(argsNode(t, "- paru\n- yay\n- homebrew"), testContext(), aurRunner(true))
 
 		require.NoError(t, err)
-		assert.Equal(t, []string{"paru", "homebrew"}, created.(*PkgManagerInstall).Managers)
+		assert.Equal(t, []string{"paru", "yay", "homebrew"}, created.Managers)
 	})
 
 	t.Run("rejects an unsupported manager", func(t *testing.T) {

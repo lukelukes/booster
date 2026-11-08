@@ -1,0 +1,13 @@
+ booster  darwin · arm64 · profile personal · ~/.dotfiles/bootstrap.yaml                       plan
+
+   ✓  homebrew            up to date
+ ▸ +  packages            install 1                                              32 ok · ← collapse
+        + lazygit
+   ~  macos-defaults      update 1                                               28 ok · ← collapse
+        ~ NSGlobalDomain KeyRepeat  6 → 2
+   ✓  links               up to date
+   ✓  git-config          up to date
+
+ 2 drifted · 3 up to date                                                                    exit 2
+
+ enter apply fixes   → details   q quit

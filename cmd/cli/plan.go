@@ -9,11 +9,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 )
 
 var errChangesPending = errors.New("changes pending")
@@ -23,17 +23,30 @@ type PlanCmd struct {
 }
 
 func (c *PlanCmd) Run(cli *CLI) error {
-	return c.run(cli, os.Stdout)
+	ticker := time.NewTicker(run.SudoRefreshInterval)
+	defer ticker.Stop()
+	return c.run(context.Background(), cli, newTerminal(cli, c.Profile, ticker.C))
 }
 
-func (c *PlanCmd) run(cli *CLI, out io.Writer) error {
-	plan, err := buildPlan(context.Background(), cli, c.Profile)
+func (c *PlanCmd) run(ctx context.Context, cli *CLI, term terminal) error {
+	plan, err := buildPlan(ctx, cli, c.Profile)
 	if err != nil {
 		return err
 	}
 
 	view := plan.View()
-	if err := ui.RenderPlan(out, view); err != nil {
+	if term.review != nil && view.HasChanges() {
+		decision, err := term.review(view, ui.ModeDrift)
+		if err != nil {
+			return err
+		}
+		if decision.Apply {
+			return execute(ctx, plan.Without(decision.Skip), term)
+		}
+		return errChangesPending
+	}
+
+	if err := ui.RenderPlan(term.out, view); err != nil {
 		return err
 	}
 

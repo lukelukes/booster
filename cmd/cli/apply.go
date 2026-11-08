@@ -2,6 +2,7 @@ package main
 
 import (
 	"booster/internal/cmdexec"
+	"booster/internal/expr"
 	"booster/internal/model"
 	"booster/internal/run"
 	"booster/internal/ui"
@@ -35,6 +36,7 @@ type terminal struct {
 	sudo        func() error
 	sudoRunner  cmdexec.Runner
 	sudoTicks   <-chan time.Time
+	review      func(model.Plan, ui.Mode) (ui.Decision, error)
 }
 
 type logFile interface {
@@ -42,18 +44,39 @@ type logFile interface {
 	Name() string
 }
 
-func (c *ApplyCmd) Run(cli *CLI) error {
-	ticker := time.NewTicker(run.SudoRefreshInterval)
-	defer ticker.Stop()
-	return c.run(context.Background(), cli, terminal{
+func newTerminal(cli *CLI, profile string, sudoTicks <-chan time.Time) terminal {
+	term := terminal{
 		in:          os.Stdin,
 		out:         os.Stdout,
 		openLog:     func() (logFile, error) { return openLog(logDir()) },
 		interactive: isTerminal(os.Stdin),
 		sudo:        ensureSudo,
 		sudoRunner:  cmdexec.DefaultRunner(),
-		sudoTicks:   ticker.C,
-	})
+		sudoTicks:   sudoTicks,
+	}
+	if term.interactive && isTerminal(os.Stdout) && os.Getenv("NO_COLOR") == "" {
+		header := reviewHeader(cli.Config, profile)
+		term.review = func(p model.Plan, mode ui.Mode) (ui.Decision, error) {
+			return ui.Review(os.Stdin, os.Stdout, header, p, mode)
+		}
+	}
+	return term
+}
+
+func reviewHeader(config, profile string) ui.Header {
+	ctx := expr.NewContext()
+	if home, err := os.UserHomeDir(); err == nil {
+		if rel, err := filepath.Rel(home, config); err == nil && !strings.HasPrefix(rel, "..") {
+			config = filepath.Join("~", rel)
+		}
+	}
+	return ui.Header{OS: ctx.OS, Arch: ctx.Arch, Profile: profile, Config: config}
+}
+
+func (c *ApplyCmd) Run(cli *CLI) error {
+	ticker := time.NewTicker(run.SudoRefreshInterval)
+	defer ticker.Stop()
+	return c.run(context.Background(), cli, newTerminal(cli, c.Profile, ticker.C))
 }
 
 func (c *ApplyCmd) run(ctx context.Context, cli *CLI, term terminal) error {
@@ -66,12 +89,34 @@ func (c *ApplyCmd) run(ctx context.Context, cli *CLI, term terminal) error {
 
 func (c *ApplyCmd) applyPlan(ctx context.Context, plan run.PlanResult, term terminal) error {
 	view := plan.View()
+	if term.review != nil && !c.Yes && view.HasChanges() {
+		decision, err := term.review(view, ui.ModeApply)
+		if err != nil {
+			return err
+		}
+		if !decision.Apply {
+			fmt.Fprintln(term.out, "cancelled, nothing changed")
+			return nil
+		}
+		return execute(ctx, plan.Without(decision.Skip), term)
+	}
+
 	if err := ui.RenderPlan(term.out, view); err != nil {
 		return err
 	}
-	if view.HasChanges() {
-		if ok, err := c.approve(view, term); err != nil || !ok {
+	if view.HasChanges() && !c.Yes {
+		if ok, err := confirm(term); err != nil || !ok {
 			return err
+		}
+	}
+	return execute(ctx, plan, term)
+}
+
+func execute(ctx context.Context, plan run.PlanResult, term terminal) error {
+	view := plan.View()
+	if view.NeedsSudo() {
+		if err := term.sudo(); err != nil {
+			return fmt.Errorf("sudo required: %w", err)
 		}
 	}
 
@@ -86,21 +131,6 @@ func (c *ApplyCmd) applyPlan(ctx context.Context, plan run.PlanResult, term term
 	}
 	fmt.Fprintf(term.out, "log: %s\n", file.Name())
 	return errors.Join(applyErr, log.Close())
-}
-
-func (c *ApplyCmd) approve(view model.Plan, term terminal) (bool, error) {
-	if !c.Yes {
-		ok, err := confirm(term)
-		if err != nil || !ok {
-			return false, err
-		}
-	}
-	if view.NeedsSudo() {
-		if err := term.sudo(); err != nil {
-			return false, fmt.Errorf("sudo required: %w", err)
-		}
-	}
-	return true, nil
 }
 
 func applySteps(ctx context.Context, plan run.PlanResult, view model.Plan, term terminal, log io.Writer) error {

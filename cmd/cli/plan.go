@@ -1,0 +1,67 @@
+package main
+
+import (
+	"booster/internal/action"
+	"booster/internal/config"
+	"booster/internal/expr"
+	"booster/internal/run"
+	"booster/internal/ui"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+)
+
+var errChangesPending = errors.New("changes pending")
+
+type PlanCmd struct {
+	Profile string `help:"Profile to use (required when profiles defined in config)"`
+}
+
+func (c *PlanCmd) Run(cli *CLI) error {
+	return c.run(cli, os.Stdout)
+}
+
+func (c *PlanCmd) run(cli *CLI, out io.Writer) error {
+	cfg, err := config.Load(cli.Config)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	profile, err := validateProfile(cfg.Profiles, c.Profile)
+	if err != nil {
+		return err
+	}
+
+	vars, err := resolveVariables(cfg.Variables)
+	if err != nil {
+		return fmt.Errorf("resolve variables: %w", err)
+	}
+
+	varsAny := make(map[string]any, len(vars))
+	for k, v := range vars {
+		varsAny[k] = v
+	}
+	exprCtx := expr.NewContext().WithProfile(profile).WithVars(varsAny)
+
+	compiled, err := run.Compile(cfg.Tasks, exprCtx, action.Registry())
+	if err != nil {
+		return fmt.Errorf("compile: %w", err)
+	}
+
+	plan, err := run.Plan(context.Background(), compiled)
+	if err != nil {
+		return fmt.Errorf("plan: %w", err)
+	}
+
+	view := plan.View()
+	if err := ui.RenderPlan(out, view); err != nil {
+		return err
+	}
+
+	if view.HasChanges() {
+		return errChangesPending
+	}
+	return nil
+}

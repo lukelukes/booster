@@ -2,8 +2,11 @@ package cmdexec
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
+	"syscall"
 	"testing"
 	"time"
 
@@ -81,4 +84,51 @@ func TestRealRunner_WithoutASinkOnlyReturnsOutput(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "quiet\n", string(out))
+}
+
+func TestRealRunner_CancelStopsTheWholeProcessGroup(t *testing.T) {
+	tests := []struct {
+		name   string
+		script string
+		within time.Duration
+	}{
+		{name: "children that exit on SIGTERM", script: `sleep 1000 & echo $!; wait`, within: time.Second},
+		{name: "children that ignore SIGTERM", script: `trap '' TERM; sleep 1000 & echo $!; wait`, within: killGrace + time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pids := make(chan string, 1)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ctx = WithLineSink(ctx, func(line string) { pids <- line })
+			done := make(chan error, 1)
+			go func() {
+				_, err := DefaultRunner().Run(ctx, "sh", "-c", tt.script)
+				done <- err
+			}()
+			var child int
+			select {
+			case line := <-pids:
+				var err error
+				child, err = strconv.Atoi(line)
+				require.NoError(t, err)
+			case <-time.After(5 * time.Second):
+				t.Fatal("the child never started")
+			}
+			t.Cleanup(func() { _ = syscall.Kill(child, syscall.SIGKILL) })
+
+			cancel()
+
+			select {
+			case err := <-done:
+				require.Error(t, err)
+			case <-time.After(tt.within):
+				t.Fatal("Run kept waiting after the context was cancelled")
+			}
+			assert.Eventually(t, func() bool {
+				return errors.Is(syscall.Kill(child, 0), syscall.ESRCH)
+			}, 2*time.Second, 10*time.Millisecond, "the child outlived the cancelled command")
+		})
+	}
 }

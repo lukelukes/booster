@@ -53,6 +53,12 @@ func NewCmd(args yaml.Node, ctx *expr.Context, runner cmdexec.Runner) (Action, e
 	if err != nil {
 		return nil, fmt.Errorf("run%w", err)
 	}
+	if len(check) > 0 && check[0] == "" {
+		return nil, errors.New("check[0]: program must not be empty")
+	}
+	if run[0] == "" {
+		return nil, errors.New("run[0]: program must not be empty")
+	}
 
 	return &Cmd{Runner: runner, CheckCmd: check, RunCmd: run, Sudo: raw.Sudo}, nil
 }

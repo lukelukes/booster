@@ -59,6 +59,9 @@ func compileTask(task config.Task, name string, ctx *expr.Context, registry map[
 	}
 
 	act, err := factory(task.Args, ctx)
+	if errors.Is(err, action.ErrNotApplicable) {
+		return Step{}, false, nil
+	}
 	if err != nil {
 		return Step{}, false, fmt.Errorf("%s: %w", task.Action, err)
 	}

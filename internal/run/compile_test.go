@@ -82,6 +82,20 @@ tasks:
 `,
 			wantSteps: []string{"config"},
 		},
+		{
+			name: "excludes actions that do not apply to this system",
+			yaml: `
+tasks:
+  - name: macos
+    action: set.darwin.defaults
+    args: {file: missing.yaml}
+  - name: dirs
+    action: dir.create
+    args: [/tmp/a]
+`,
+			wantSteps:    []string{"dirs"},
+			wantExcluded: 1,
+		},
 	}
 
 	for _, tt := range tests {

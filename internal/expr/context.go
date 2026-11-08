@@ -17,6 +17,8 @@ type Context struct {
 	Env map[string]string `expr:"env"`
 
 	Vars map[string]any `expr:"vars"`
+
+	ConfigDir string `expr:"-"`
 }
 
 func NewContext() *Context {
@@ -38,6 +40,12 @@ func (c *Context) WithProfile(profile string) *Context {
 func (c *Context) WithVars(vars map[string]any) *Context {
 	cp := c.clone()
 	cp.Vars = vars
+	return cp
+}
+
+func (c *Context) WithConfigDir(dir string) *Context {
+	cp := c.clone()
+	cp.ConfigDir = dir
 	return cp
 }
 

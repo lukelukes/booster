@@ -23,6 +23,7 @@ func NewRegistry(runner cmdexec.Runner) map[string]Factory {
 		"pkg.install":         host.pkgInstall,
 		"mise.use":            host.miseUse,
 		"git.config":          host.gitConfig,
+		"set.darwin.defaults": NewDarwinDefaults,
 	}
 }
 

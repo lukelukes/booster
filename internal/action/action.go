@@ -3,7 +3,10 @@ package action
 import (
 	"booster/internal/model"
 	"context"
+	"errors"
 )
+
+var ErrNotApplicable = errors.New("not applicable on this system")
 
 type Action interface {
 	Name() string

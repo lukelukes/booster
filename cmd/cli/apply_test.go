@@ -225,31 +225,54 @@ func TestApplyCmd_FailedStepStopsTheRun(t *testing.T) {
 }
 
 func TestApplyCmd_RefreshesSudoOnlyWhileApplying(t *testing.T) {
+	needsSudo := model.Change{Kind: model.ChangeCreate, Verb: "install", NeedsSudo: true}
+	noSudo := model.Change{Kind: model.ChangeCreate, Verb: "create"}
+	upToDateSudo := model.Change{Kind: model.ChangeNone, NeedsSudo: true}
 	tests := []struct {
-		name       string
-		finish     func(cancel context.CancelFunc) error
-		wantEvents []string
-		wantErr    string
-		wantOut    string
+		name        string
+		changes     []model.Change
+		finish      func(cancel context.CancelFunc) error
+		wantRefresh bool
+		wantEvents  []string
+		wantErr     string
+		wantOut     string
 	}{
 		{
-			name:       "completed",
-			wantEvents: []string{"sudo", "apply a", "apply b"},
-			wantOut:    "2 changed · 0 up to date",
+			name:        "completed",
+			changes:     []model.Change{needsSudo, needsSudo},
+			wantRefresh: true,
+			wantEvents:  []string{"sudo", "apply a", "apply b"},
+			wantOut:     "2 changed · 0 up to date",
 		},
 		{
-			name:       "failed",
-			finish:     func(context.CancelFunc) error { return errors.New("exit status 1") },
-			wantEvents: []string{"sudo", "apply a"},
-			wantErr:    "1 of 2 steps failed",
-			wantOut:    "- b  not run",
+			name:        "failed",
+			changes:     []model.Change{needsSudo, needsSudo},
+			finish:      func(context.CancelFunc) error { return errors.New("exit status 1") },
+			wantRefresh: true,
+			wantEvents:  []string{"sudo", "apply a"},
+			wantErr:     "1 of 2 steps failed",
+			wantOut:     "- b  not run",
 		},
 		{
-			name:       "interrupted",
-			finish:     func(cancel context.CancelFunc) error { cancel(); return nil },
-			wantEvents: []string{"sudo", "apply a"},
-			wantErr:    "apply interrupted: context canceled",
-			wantOut:    "- b  not run",
+			name:        "interrupted",
+			changes:     []model.Change{needsSudo, needsSudo},
+			finish:      func(cancel context.CancelFunc) error { cancel(); return nil },
+			wantRefresh: true,
+			wantEvents:  []string{"sudo", "apply a"},
+			wantErr:     "apply interrupted: context canceled",
+			wantOut:     "- b  not run",
+		},
+		{
+			name:       "only changes without sudo",
+			changes:    []model.Change{noSudo},
+			wantEvents: []string{"apply a"},
+			wantOut:    "1 changed · 0 up to date",
+		},
+		{
+			name:       "sudo step already up to date",
+			changes:    []model.Change{noSudo, upToDateSudo},
+			wantEvents: []string{"apply a"},
+			wantOut:    "1 changed · 1 up to date",
 		},
 	}
 
@@ -265,15 +288,21 @@ func TestApplyCmd_RefreshesSudoOnlyWhileApplying(t *testing.T) {
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			needsSudo := model.Change{Kind: model.ChangeCreate, Verb: "install", NeedsSudo: true}
-			plan := run.PlanResult{Steps: []run.Planned{ft.planned("a", needsSudo), ft.planned("b", needsSudo)}}
+			var plan run.PlanResult
+			for i, change := range tt.changes {
+				plan.Steps = append(plan.Steps, ft.planned(string(rune('a'+i)), change))
+			}
 			plan.Steps[0].Action.(*fakeAction).onApply = func() error {
 				ft.sudoTicks <- time.Time{}
-				select {
-				case call := <-refreshes:
-					assert.Equal(t, []string{"sudo", "-n", "-v"}, call)
-				case <-time.After(5 * time.Second):
-					t.Error("sudo was not refreshed while applying")
+				if tt.wantRefresh {
+					select {
+					case call := <-refreshes:
+						assert.Equal(t, []string{"sudo", "-n", "-v"}, call)
+					case <-time.After(5 * time.Second):
+						t.Error("sudo was not refreshed while applying")
+					}
+				} else {
+					assert.Never(t, func() bool { return len(ft.sudoTicks) == 0 }, 100*time.Millisecond, 10*time.Millisecond, "sudo refresher ran while no planned change needed sudo")
 				}
 				if tt.finish != nil {
 					return tt.finish(cancel)
@@ -295,7 +324,7 @@ func TestApplyCmd_RefreshesSudoOnlyWhileApplying(t *testing.T) {
 			case ft.sudoTicks <- time.Time{}:
 			default:
 			}
-			assert.Never(t, func() bool { return len(refreshes) > 0 }, 100*time.Millisecond, 10*time.Millisecond, "sudo was refreshed after apply finished")
+			assert.Empty(t, refreshes, "sudo was refreshed when no running change needed it")
 			assert.Len(t, ft.sudoTicks, 1)
 		})
 	}

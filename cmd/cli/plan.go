@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 )
 
 var errChangesPending = errors.New("changes pending")
@@ -60,7 +61,7 @@ func buildPlan(cli *CLI, profileFlag string) (run.PlanResult, error) {
 	for k, v := range vars {
 		varsAny[k] = v
 	}
-	exprCtx := expr.NewContext().WithProfile(profile).WithVars(varsAny)
+	exprCtx := expr.NewContext().WithProfile(profile).WithVars(varsAny).WithConfigDir(filepath.Dir(cli.Config))
 
 	compiled, err := run.Compile(cfg.Tasks, exprCtx, action.Registry())
 	if err != nil {

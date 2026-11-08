@@ -23,6 +23,7 @@ func NewRegistry(runner cmdexec.Runner) map[string]Factory {
 		"pkg.install":         host.pkgInstall,
 		"mise.use":            host.miseUse,
 		"git.config":          host.gitConfig,
+		"set.darwin.defaults": host.darwinDefaults,
 	}
 }
 
@@ -61,4 +62,8 @@ func (h *host) miseUse(args yaml.Node, ctx *expr.Context) (Action, error) {
 
 func (h *host) gitConfig(args yaml.Node, ctx *expr.Context) (Action, error) {
 	return NewGitConfig(args, ctx, h.runner)
+}
+
+func (h *host) darwinDefaults(args yaml.Node, ctx *expr.Context) (Action, error) {
+	return NewDarwinDefaults(args, ctx, h.runner)
 }

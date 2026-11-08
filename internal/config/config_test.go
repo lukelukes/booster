@@ -491,6 +491,48 @@ default:
 			want: "me@example.com",
 		},
 		{
+			name: "treats a missing default as empty",
+			def:  `prompt: Git email`,
+			want: "",
+		},
+		{
+			name: "treats a null default as empty",
+			def: `
+prompt: Git email
+default: null
+`,
+			want: "",
+		},
+		{
+			name: "treats a tilde default as empty",
+			def: `
+prompt: Git email
+default: ~
+`,
+			want: "",
+		},
+		{
+			name: "keeps a quoted null as text",
+			def: `
+prompt: Git email
+default: "null"
+`,
+			want: "null",
+		},
+		{
+			name: "treats a match-selected null as empty",
+			def: `
+prompt: Git email
+default:
+  match:
+    on: ${ os }
+    cases:
+      darwin: ~
+    default: me@example.com
+`,
+			want: "",
+		},
+		{
 			name: "reports a match with no case and no default",
 			def: `
 prompt: Git email

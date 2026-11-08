@@ -25,14 +25,25 @@ type VariableDef struct {
 func (v VariableDef) ResolveDefault(ctx *expr.Context) (string, error) {
 	node, err := expr.ResolveMatches(v.Default, ctx)
 	if err != nil {
-		return "", fmt.Errorf("default%w", err)
-	}
-
-	var value expr.Str
-	if err := value.UnmarshalYAML(&node); err != nil {
+		if pathErr, ok := errors.AsType[*expr.PathError](err); ok {
+			return "", fmt.Errorf("default%s: %w", pathErr.Path, pathErr.Err)
+		}
 		return "", fmt.Errorf("default: %w", err)
 	}
-	return string(value), nil
+	if node.IsZero() {
+		return "", nil
+	}
+
+	var scalar expr.Str
+	if err := scalar.UnmarshalYAML(&node); err != nil {
+		return "", fmt.Errorf("default: %w", err)
+	}
+
+	var value string
+	if err := node.Decode(&value); err != nil {
+		return "", fmt.Errorf("default: %w", err)
+	}
+	return value, nil
 }
 
 type Task struct {

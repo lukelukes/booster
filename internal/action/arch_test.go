@@ -8,6 +8,7 @@ import (
 	"booster/internal/run"
 	"context"
 	"errors"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -20,7 +21,7 @@ import (
 type fakeArch struct {
 	t         *testing.T
 	repo      []string
-	groups    []string
+	groups    map[string][]string
 	aur       []string
 	installed []string
 	binaries  []string
@@ -43,7 +44,15 @@ func (f *fakeArch) Run(_ context.Context, name string, args ...string) ([]byte, 
 	case command == "pacman -Slq":
 		return []byte(strings.Join(f.repo, "\n")), nil
 	case command == "pacman -Sg":
-		return []byte(strings.Join(f.groups, "\n")), nil
+		return []byte(strings.Join(slices.Collect(maps.Keys(f.groups)), "\n")), nil
+	case command == "pacman -Sgg":
+		var lines []string
+		for group, members := range f.groups {
+			for _, member := range members {
+				lines = append(lines, group+" "+member)
+			}
+		}
+		return []byte(strings.Join(lines, "\n")), nil
 	case name == "pacman" && len(args) == 2 && args[0] == "-Q":
 		if slices.Contains(f.installed, args[1]) {
 			return nil, nil
@@ -144,17 +153,29 @@ tasks:
 		assert.Equal(t, model.ChangeNone, result.Steps[0].Change.Kind)
 	})
 
-	t.Run("package groups count as repo packages", func(t *testing.T) {
-		machine := &fakeArch{t: t, repo: []string{"fd"}, groups: []string{"base-devel"}}
-
-		result, err := planArch(t, machine, `
+	t.Run("a package group installs its missing members and then converges", func(t *testing.T) {
+		machine := &fakeArch{
+			t:         t,
+			repo:      []string{"fd", "autoconf", "make"},
+			groups:    map[string][]string{"base-devel": {"autoconf", "make"}},
+			installed: []string{"make"},
+		}
+		config := `
 tasks:
   - action: pkg.install
     args: [base-devel, fd]
-`)
+`
 
+		result, err := planArch(t, machine, config)
 		require.NoError(t, err)
-		assert.Len(t, result.Steps[0].Change.Items, 2)
+		assert.Equal(t, []model.Item{{Name: "base-devel"}, {Name: "fd"}}, result.Steps[0].Change.Items)
+
+		apply(t, result)
+
+		assert.Equal(t, []string{"sudo pacman -S --noconfirm --needed autoconf make fd"}, machine.commands)
+		result, err = planArch(t, machine, config)
+		require.NoError(t, err)
+		assert.Equal(t, model.ChangeNone, result.Steps[0].Change.Kind)
 	})
 
 	helpers := []struct {

@@ -39,13 +39,37 @@ func (m *PacmanManager) ListInstalled(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list installed packages: %w", err)
 	}
+	installed := parseLines(string(output))
 
-	return parseLines(string(output)), nil
+	groups, err := m.groups(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for group, members := range groups {
+		if len(missingFrom(installed, members)) == 0 {
+			installed = append(installed, group)
+		}
+	}
+
+	return installed, nil
 }
 
 func (m *PacmanManager) Install(ctx context.Context, pkgs []string) (string, error) {
 	if len(pkgs) == 0 {
 		return "", nil
+	}
+
+	groups, err := m.groups(ctx)
+	if err != nil {
+		return "", err
+	}
+	var targets []string
+	for _, pkg := range pkgs {
+		if members, ok := groups[pkg]; ok {
+			targets = append(targets, members...)
+		} else {
+			targets = append(targets, pkg)
+		}
 	}
 
 	name, args := "sudo", []string{"pacman", "-S", "--noconfirm", "--needed"}
@@ -56,7 +80,7 @@ func (m *PacmanManager) Install(ctx context.Context, pkgs []string) (string, err
 		name, args = helper, []string{"-S", "--noconfirm", "--needed"}
 	}
 
-	output, err := m.Runner.Run(ctx, name, append(args, pkgs...)...)
+	output, err := m.Runner.Run(ctx, name, append(args, targets...)...)
 	if err != nil {
 		return string(output), fmt.Errorf("%s install: %w", m.Name(), err)
 	}
@@ -84,6 +108,21 @@ func (m *PacmanManager) Installable(ctx context.Context, pkgs []string) error {
 	}
 
 	return nil
+}
+
+func (m *PacmanManager) groups(ctx context.Context) (map[string][]string, error) {
+	output, err := m.Runner.Run(ctx, "pacman", "-Sgg")
+	if err != nil {
+		return nil, fmt.Errorf("list repo groups: %w", err)
+	}
+
+	groups := map[string][]string{}
+	for _, line := range parseLines(string(output)) {
+		if group, member, ok := strings.Cut(line, " "); ok {
+			groups[group] = append(groups[group], member)
+		}
+	}
+	return groups, nil
 }
 
 func (m *PacmanManager) helper() string {

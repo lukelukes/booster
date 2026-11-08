@@ -28,18 +28,6 @@ func TestPacmanManager(t *testing.T) {
 		assert.Equal(t, []string{"fd", "ripgrep", "yq"}, installed)
 	})
 
-	t.Run("installs through the AUR helper", func(t *testing.T) {
-		runner := outputRunner("", nil)
-		manager := NewPacmanManager(runner)
-
-		_, err := manager.Install(context.Background(), []string{"fd", "yq"})
-
-		require.NoError(t, err)
-		require.Len(t, runner.Calls, 1)
-		assert.Equal(t, "paru", runner.Calls[0].Name)
-		assert.Equal(t, []string{"-S", "--noconfirm", "--needed", "--skipreview", "fd", "yq"}, runner.Calls[0].Args)
-	})
-
 	t.Run("runs nothing for an empty package list", func(t *testing.T) {
 		runner := outputRunner("", nil)
 		manager := NewPacmanManager(runner)

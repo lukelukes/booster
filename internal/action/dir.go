@@ -38,10 +38,6 @@ func (a *DirCreate) Name() string {
 	return "dir.create"
 }
 
-func (a *DirCreate) NeedsSudo() bool {
-	return false
-}
-
 func (a *DirCreate) Check(_ context.Context) (model.Change, error) {
 	change := model.Change{Verb: "create", Total: len(a.Paths)}
 

@@ -11,6 +11,4 @@ type Action interface {
 	Check(ctx context.Context) (model.Change, error)
 
 	Apply(ctx context.Context) error
-
-	NeedsSudo() bool
 }

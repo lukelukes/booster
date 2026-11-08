@@ -18,8 +18,7 @@ type fakeAction struct {
 	applied  int
 }
 
-func (f *fakeAction) Name() string    { return "fake" }
-func (f *fakeAction) NeedsSudo() bool { return false }
+func (f *fakeAction) Name() string { return "fake" }
 
 func (f *fakeAction) Check(context.Context) (model.Change, error) {
 	f.checked++

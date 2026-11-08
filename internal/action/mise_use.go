@@ -70,10 +70,6 @@ func (a *MiseUse) Name() string {
 	return "mise.use"
 }
 
-func (a *MiseUse) NeedsSudo() bool {
-	return false
-}
-
 func (a *MiseUse) Check(ctx context.Context) (model.Change, error) {
 	change := model.Change{Verb: "use", Total: len(a.Tools)}
 

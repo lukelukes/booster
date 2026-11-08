@@ -192,7 +192,6 @@ func TestNewPkgInstall(t *testing.T) {
 		assert.Equal(t, []string{"ripgrep", "neovim", "fd", "yq"}, pkg.Packages)
 		assert.Equal(t, []string{"ghostty"}, pkg.Casks)
 		assert.IsType(t, &HomebrewManager{}, pkg.Manager)
-		assert.False(t, pkg.NeedsSudo())
 	})
 
 	t.Run("uses pacman off darwin", func(t *testing.T) {
@@ -201,7 +200,6 @@ func TestNewPkgInstall(t *testing.T) {
 		require.NoError(t, err)
 		pkg := created.(*PkgInstall)
 		assert.IsType(t, &PacmanManager{}, pkg.Manager)
-		assert.True(t, pkg.NeedsSudo())
 	})
 
 	t.Run("rejects a scalar", func(t *testing.T) {

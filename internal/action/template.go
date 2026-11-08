@@ -53,10 +53,6 @@ func (a *TemplateRender) Name() string {
 	return "template.render"
 }
 
-func (a *TemplateRender) NeedsSudo() bool {
-	return false
-}
-
 func (a *TemplateRender) Check(_ context.Context) (model.Change, error) {
 	change := model.Change{Verb: "render", Total: len(a.Files)}
 

@@ -30,10 +30,6 @@ func (a *SymlinkCreate) Name() string {
 	return "symlink.create"
 }
 
-func (a *SymlinkCreate) NeedsSudo() bool {
-	return false
-}
-
 func (a *SymlinkCreate) Check(_ context.Context) (model.Change, error) {
 	change := model.Change{Verb: "link", Total: len(a.Links)}
 

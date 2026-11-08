@@ -89,7 +89,7 @@ func (c *RunCmd) Run(cli *CLI) error {
 		Runner: runner,
 	}))
 	builder.Register("mise.use", task.NewMiseUseFactory(task.MiseUseConfig{Runner: runner}))
-	builder.Register("git.config", task.NewGitConfig(runner, tui.NewHuhPrompter()))
+	builder.Register("git.config", task.NewGitConfig(runner))
 	builder.Register("set.darwin.defaults", task.NewDarwinDefaultsFactory(task.DarwinDefaultsConfig{
 		OS:        sysOS,
 		ConfigDir: configDir,

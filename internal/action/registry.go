@@ -22,6 +22,7 @@ func NewRegistry(runner cmdexec.Runner) map[string]Factory {
 		"pkg-manager.install": host.pkgManagerInstall,
 		"pkg.install":         host.pkgInstall,
 		"mise.use":            host.miseUse,
+		"git.config":          host.gitConfig,
 	}
 }
 
@@ -56,4 +57,8 @@ func (h *host) pkgInstall(args yaml.Node, ctx *expr.Context) (Action, error) {
 
 func (h *host) miseUse(args yaml.Node, ctx *expr.Context) (Action, error) {
 	return NewMiseUse(args, ctx, h.runner)
+}
+
+func (h *host) gitConfig(args yaml.Node, ctx *expr.Context) (Action, error) {
+	return NewGitConfig(args, ctx, h.runner)
 }

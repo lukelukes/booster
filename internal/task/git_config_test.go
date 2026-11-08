@@ -10,24 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type MockPrompter struct {
-	PromptFunc func(ctx context.Context, promptText string) (string, error)
-
-	Calls []PromptCall
-}
-
-type PromptCall struct {
-	PromptText string
-}
-
-func (m *MockPrompter) Prompt(ctx context.Context, promptText string) (string, error) {
-	m.Calls = append(m.Calls, PromptCall{PromptText: promptText})
-	if m.PromptFunc != nil {
-		return m.PromptFunc(ctx, promptText)
-	}
-	return "", nil
-}
-
 type gitSetCall struct {
 	Key   string
 	Value string
@@ -118,36 +100,6 @@ func TestGitConfig_Run(t *testing.T) {
 			},
 		},
 		{
-			name: "skips when key exists and no explicit value",
-			setupStore: func() *FakeGitConfigStore {
-				return &FakeGitConfigStore{
-					GetFunc: func(context.Context, string) (string, error) {
-						return "Existing User", nil
-					},
-				}
-			},
-			items:       []GitConfigItem{{Key: "user.name", Prompt: "What is your name?"}},
-			wantStatus:  StatusSkipped,
-			wantMessage: "all keys already configured",
-			checkStore: func(t *testing.T, store *FakeGitConfigStore) {
-				assert.Equal(t, []string{"user.name"}, store.GetCalls)
-				assert.Empty(t, store.SetCalls)
-			},
-		},
-		{
-			name: "skips when no prompt and no value",
-			setupStore: func() *FakeGitConfigStore {
-				return &FakeGitConfigStore{}
-			},
-			items:       []GitConfigItem{{Key: "user.name"}},
-			wantStatus:  StatusSkipped,
-			wantMessage: "all keys already configured",
-			checkStore: func(t *testing.T, store *FakeGitConfigStore) {
-				assert.Equal(t, []string{"user.name"}, store.GetCalls)
-				assert.Empty(t, store.SetCalls)
-			},
-		},
-		{
 			name: "empty items",
 			setupStore: func() *FakeGitConfigStore {
 				return &FakeGitConfigStore{}
@@ -165,13 +117,7 @@ func TestGitConfig_Run(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store := tt.setupStore()
-			prompter := &MockPrompter{
-				PromptFunc: func(ctx context.Context, promptText string) (string, error) {
-					t.Fatal("Prompter should not be called in this test")
-					return "", nil
-				},
-			}
-			task := &GitConfig{Store: store, Prompter: prompter, Items: tt.items}
+			task := &GitConfig{Store: store, Items: tt.items}
 
 			result := task.Run(context.Background())
 
@@ -179,119 +125,6 @@ func TestGitConfig_Run(t *testing.T) {
 			assert.Equal(t, tt.wantMessage, result.Message)
 			if tt.checkStore != nil {
 				tt.checkStore(t, store)
-			}
-		})
-	}
-}
-
-func TestGitConfig_Prompting(t *testing.T) {
-	tests := []struct {
-		name           string
-		setupStore     func() *FakeGitConfigStore
-		promptFunc     func(context.Context, string) (string, error)
-		withPrompter   bool
-		items          []GitConfigItem
-		wantStatus     Status
-		wantMessage    string
-		wantErrContain string
-		checkCalls     func(t *testing.T, store *FakeGitConfigStore, prompter *MockPrompter)
-	}{
-		{
-			name: "prompts only when no existing value and no explicit value",
-			setupStore: func() *FakeGitConfigStore {
-				return &FakeGitConfigStore{}
-			},
-			promptFunc: func(ctx context.Context, promptText string) (string, error) {
-				assert.Equal(t, "What is your name for git commits?", promptText)
-				return "John Doe", nil
-			},
-			withPrompter: true,
-			items:        []GitConfigItem{{Key: "user.name", Prompt: "What is your name for git commits?"}},
-			wantStatus:   StatusDone,
-			wantMessage:  "configured 1 keys",
-			checkCalls: func(t *testing.T, store *FakeGitConfigStore, prompter *MockPrompter) {
-				assert.Len(t, prompter.Calls, 1)
-				require.Len(t, store.SetCalls, 1)
-				assert.Equal(t, "user.name", store.SetCalls[0].Key)
-				assert.Equal(t, "John Doe", store.SetCalls[0].Value)
-			},
-		},
-		{
-			name: "does not prompt when explicit value provided",
-			setupStore: func() *FakeGitConfigStore {
-				return &FakeGitConfigStore{}
-			},
-			promptFunc: func(ctx context.Context, promptText string) (string, error) {
-				t.Fatal("Prompter should not be called when explicit value is provided")
-				return "", nil
-			},
-			withPrompter: true,
-			items:        []GitConfigItem{{Key: "user.name", Value: "Jane Doe", Prompt: "What is your name?"}},
-			wantStatus:   StatusDone,
-			wantMessage:  "configured 1 keys",
-			checkCalls: func(t *testing.T, store *FakeGitConfigStore, prompter *MockPrompter) {
-				assert.Empty(t, prompter.Calls)
-				require.Len(t, store.SetCalls, 1)
-				assert.Equal(t, "user.name", store.SetCalls[0].Key)
-				assert.Equal(t, "Jane Doe", store.SetCalls[0].Value)
-			},
-		},
-		{
-			name: "fails when prompt cancelled",
-			setupStore: func() *FakeGitConfigStore {
-				return &FakeGitConfigStore{}
-			},
-			promptFunc: func(ctx context.Context, promptText string) (string, error) {
-				return "", errors.New("user cancelled")
-			},
-			withPrompter:   true,
-			items:          []GitConfigItem{{Key: "user.name", Prompt: "What is your name?"}},
-			wantStatus:     StatusFailed,
-			wantErrContain: "prompt for user.name",
-			checkCalls: func(t *testing.T, store *FakeGitConfigStore, prompter *MockPrompter) {
-				assert.Len(t, prompter.Calls, 1)
-				assert.Empty(t, store.SetCalls)
-			},
-		},
-		{
-			name: "fails when prompter not configured",
-			setupStore: func() *FakeGitConfigStore {
-				return &FakeGitConfigStore{}
-			},
-			withPrompter:   false,
-			items:          []GitConfigItem{{Key: "user.name", Prompt: "What is your name?"}},
-			wantStatus:     StatusFailed,
-			wantErrContain: "no prompter configured",
-			checkCalls: func(t *testing.T, store *FakeGitConfigStore, prompter *MockPrompter) {
-				assert.Empty(t, store.SetCalls)
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			store := tt.setupStore()
-
-			var prompter Prompter
-			var mockPrompter *MockPrompter
-			if tt.withPrompter {
-				mockPrompter = &MockPrompter{PromptFunc: tt.promptFunc}
-				prompter = mockPrompter
-			}
-
-			task := &GitConfig{Store: store, Prompter: prompter, Items: tt.items}
-			result := task.Run(context.Background())
-
-			assert.Equal(t, tt.wantStatus, result.Status)
-			if tt.wantMessage != "" {
-				assert.Equal(t, tt.wantMessage, result.Message)
-			}
-			if tt.wantErrContain != "" {
-				assert.Error(t, result.Error)
-				assert.Contains(t, result.Error.Error(), tt.wantErrContain)
-			}
-			if tt.checkCalls != nil {
-				tt.checkCalls(t, store, mockPrompter)
 			}
 		})
 	}
@@ -311,21 +144,11 @@ func TestGitConfig_HandlesMultipleItems(t *testing.T) {
 		},
 	}
 
-	prompter := &MockPrompter{
-		PromptFunc: func(ctx context.Context, promptText string) (string, error) {
-			if promptText == "What is your email?" {
-				return "john@example.com", nil
-			}
-			return "", errors.New("unexpected prompt")
-		},
-	}
-
 	task := &GitConfig{
-		Store:    store,
-		Prompter: prompter,
+		Store: store,
 		Items: []GitConfigItem{
-			{Key: "user.name", Prompt: "What is your name?"},
-			{Key: "user.email", Prompt: "What is your email?"},
+			{Key: "user.name", Value: "John Doe"},
+			{Key: "user.email", Value: "john@example.com"},
 			{Key: "init.defaultBranch", Value: "main"},
 		},
 	}
@@ -334,7 +157,6 @@ func TestGitConfig_HandlesMultipleItems(t *testing.T) {
 
 	assert.Equal(t, StatusDone, result.Status)
 	assert.Equal(t, "configured 2 keys (skipped 1)", result.Message)
-	assert.Len(t, prompter.Calls, 1, "Should prompt once for user.email")
 	assert.Len(t, store.GetCalls, 3)
 	assert.Len(t, store.SetCalls, 2)
 }
@@ -347,8 +169,7 @@ func TestGitConfig_FailsWhenSetFails(t *testing.T) {
 	}
 
 	task := &GitConfig{
-		Store:    store,
-		Prompter: &MockPrompter{},
+		Store: store,
 		Items: []GitConfigItem{
 			{Key: "user.name", Value: "John Doe"},
 		},
@@ -434,8 +255,8 @@ func TestNewGitConfig(t *testing.T) {
 			name: "valid args",
 			args: []any{
 				map[string]any{
-					"key":    "user.name",
-					"prompt": "What is your name?",
+					"key":   "user.name",
+					"value": "Jane Doe",
 				},
 				map[string]any{
 					"key":   "user.email",
@@ -489,24 +310,31 @@ func TestNewGitConfig(t *testing.T) {
 			wantTaskCount: 0,
 		},
 		{
-			name: "only key provided",
+			name: "invalid args - missing value",
 			args: []any{
 				map[string]any{
 					"key": "user.name",
 				},
 			},
-			wantErr:       false,
-			wantTaskCount: 1,
-			checkTask: func(t *testing.T, task Task) {
-				name := task.Name()
-				assert.Contains(t, name, "user.name")
+			wantErr:        true,
+			wantErrStrings: []string{"arg 1", "'value' is required"},
+		},
+		{
+			name: "invalid args - prompt",
+			args: []any{
+				map[string]any{
+					"key":    "user.name",
+					"prompt": "What is your name?",
+				},
 			},
+			wantErr:        true,
+			wantErrStrings: []string{"arg 1", "'prompt' is no longer supported", "vars."},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			factory := NewGitConfig(&cmdexec.MockRunner{}, &MockPrompter{})
+			factory := NewGitConfig(&cmdexec.MockRunner{})
 			tasks, err := factory(tt.args)
 
 			if tt.wantErr {
@@ -537,8 +365,7 @@ func TestGitConfig_ErrorOutputNoLeadingNewline(t *testing.T) {
 	}
 
 	task := &GitConfig{
-		Store:    store,
-		Prompter: &MockPrompter{},
+		Store: store,
 		Items: []GitConfigItem{
 			{Key: "user.name", Value: "test"},
 		},
@@ -553,7 +380,7 @@ func TestGitConfig_ErrorOutputNoLeadingNewline(t *testing.T) {
 }
 
 func TestNewGitConfig_ErrorIndexFirstArg(t *testing.T) {
-	factory := NewGitConfig(&cmdexec.MockRunner{}, &MockPrompter{})
+	factory := NewGitConfig(&cmdexec.MockRunner{})
 
 	args := []any{
 		map[string]any{
@@ -569,11 +396,12 @@ func TestNewGitConfig_ErrorIndexFirstArg(t *testing.T) {
 }
 
 func TestNewGitConfig_ErrorIndexSecondArg(t *testing.T) {
-	factory := NewGitConfig(&cmdexec.MockRunner{}, &MockPrompter{})
+	factory := NewGitConfig(&cmdexec.MockRunner{})
 
 	args := []any{
 		map[string]any{
-			"key": "valid.key",
+			"key":   "valid.key",
+			"value": "x",
 		},
 		map[string]any{
 			"value": "missing key",

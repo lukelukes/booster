@@ -47,7 +47,7 @@ func (p *pkgInstallArgs) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func NewPkgInstall(args yaml.Node, ctx *expr.Context, runner cmdexec.Runner) (Action, error) {
+func NewPkgInstall(args yaml.Node, ctx *expr.Context, runner cmdexec.Runner) (*PkgInstall, error) {
 	if args.IsZero() || args.Kind != yaml.SequenceNode {
 		return nil, errors.New("args must be a list of package names or {packages, casks} entries")
 	}
@@ -106,17 +106,26 @@ func (a *PkgInstall) Check(ctx context.Context) (model.Change, error) {
 		return change, nil
 	}
 
-	missing, err := a.missing(ctx)
+	packages, err := a.missingPackages(ctx)
 	if err != nil {
 		return model.Change{}, err
 	}
 
-	for _, pkg := range missing {
+	if err := a.checkInstallable(ctx, packages); err != nil {
+		return model.Change{}, err
+	}
+
+	casks, err := a.missingCasks(ctx)
+	if err != nil {
+		return model.Change{}, err
+	}
+
+	for _, pkg := range append(packages, casks...) {
 		change.Items = append(change.Items, model.Item{Name: pkg})
 	}
 	if len(change.Items) > 0 {
 		change.Kind = model.ChangeCreate
-		change.NeedsSudo = a.OS != "darwin"
+		change.NeedsSudo = a.OS != "darwin" || len(casks) > 0
 	}
 
 	return change, nil
@@ -150,6 +159,17 @@ func (a *PkgInstall) Apply(ctx context.Context) error {
 	return nil
 }
 
+func (a *PkgInstall) checkInstallable(ctx context.Context, missing []string) error {
+	checker, ok := a.Manager.(interface {
+		Installable(ctx context.Context, pkgs []string) error
+	})
+	if !ok {
+		return nil
+	}
+
+	return checker.Installable(ctx, missing)
+}
+
 func (a *PkgInstall) validateCasks() error {
 	if len(a.Casks) == 0 {
 		return nil
@@ -162,20 +182,6 @@ func (a *PkgInstall) validateCasks() error {
 	}
 
 	return nil
-}
-
-func (a *PkgInstall) missing(ctx context.Context) ([]string, error) {
-	packages, err := a.missingPackages(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	casks, err := a.missingCasks(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return append(packages, casks...), nil
 }
 
 func (a *PkgInstall) missingPackages(ctx context.Context) ([]string, error) {

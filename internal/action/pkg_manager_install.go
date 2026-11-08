@@ -24,7 +24,7 @@ type PkgManagerInstall struct {
 	Managers   []string
 }
 
-func NewPkgManagerInstall(args yaml.Node, ctx *expr.Context, runner cmdexec.Runner) (Action, error) {
+func NewPkgManagerInstall(args yaml.Node, ctx *expr.Context, runner cmdexec.Runner) (*PkgManagerInstall, error) {
 	if args.IsZero() || args.Kind != yaml.SequenceNode {
 		return nil, errors.New("args must be a list of package manager names")
 	}

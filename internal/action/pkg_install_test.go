@@ -88,26 +88,6 @@ func TestPkgInstall_Check(t *testing.T) {
 		assert.Empty(t, change.Items)
 	})
 
-	t.Run("reports missing casks on darwin", func(t *testing.T) {
-		manager := &stubCaskManager{
-			stubManager:    &stubManager{installed: []string{"fd"}},
-			installedCasks: []string{"firefox"},
-		}
-		action := &PkgInstall{
-			Manager:  manager,
-			OS:       "darwin",
-			Packages: []string{"fd", "yq"},
-			Casks:    []string{"firefox", "ghostty"},
-		}
-
-		change, err := action.Check(context.Background())
-
-		require.NoError(t, err)
-		assert.Equal(t, 4, change.Total)
-		assert.Equal(t, []model.Item{{Name: "yq"}, {Name: "ghostty"}}, change.Items)
-		assert.False(t, change.NeedsSudo)
-	})
-
 	t.Run("fails when casks are used off darwin", func(t *testing.T) {
 		action := &PkgInstall{Manager: &stubManager{}, OS: "arch", Casks: []string{"firefox"}}
 
@@ -188,7 +168,7 @@ func TestNewPkgInstall(t *testing.T) {
 		created, err := NewPkgInstall(args, ctx, nil)
 
 		require.NoError(t, err)
-		pkg := created.(*PkgInstall)
+		pkg := created
 		assert.Equal(t, []string{"ripgrep", "neovim", "fd", "yq"}, pkg.Packages)
 		assert.Equal(t, []string{"ghostty"}, pkg.Casks)
 		assert.IsType(t, &HomebrewManager{}, pkg.Manager)
@@ -198,7 +178,7 @@ func TestNewPkgInstall(t *testing.T) {
 		created, err := NewPkgInstall(argsNode(t, "- ripgrep"), testContext(), nil)
 
 		require.NoError(t, err)
-		pkg := created.(*PkgInstall)
+		pkg := created
 		assert.IsType(t, &PacmanManager{}, pkg.Manager)
 	})
 

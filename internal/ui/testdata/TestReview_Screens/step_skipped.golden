@@ -1,0 +1,12 @@
+ booster  darwin · arm64 · profile personal · ~/.dotfiles/bootstrap.yaml                       plan
+
+   +  homebrew            install 1                                                      needs sudo
+ ▸ -  packages            install 3                                                         skipped
+   ~  macos-defaults      update 1                                                             2 ok
+   ~  links               link 3
+   ✓  git-config          up to date
+   ?  login-shell         known after apply
+
+ 3 to change · 1 up to date · 1 after apply · 1 skipped                                  1 excluded
+
+ ↑↓ move   → details   space skip   enter apply   q quit

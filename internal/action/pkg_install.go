@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -157,21 +156,13 @@ func (a *PkgInstall) Apply(ctx context.Context) error {
 
 func (a *PkgInstall) checkInstallable(ctx context.Context, missing []string) error {
 	checker, ok := a.Manager.(interface {
-		Uninstallable(ctx context.Context, pkgs []string) ([]string, error)
+		Installable(ctx context.Context, pkgs []string) error
 	})
 	if !ok {
 		return nil
 	}
 
-	uninstallable, err := checker.Uninstallable(ctx, missing)
-	if err != nil {
-		return err
-	}
-	if len(uninstallable) > 0 {
-		return fmt.Errorf("not in the pacman repos and no AUR helper is installed: %s; add a pkg-manager.install step for paru or yay before this one", strings.Join(uninstallable, ", "))
-	}
-
-	return nil
+	return checker.Installable(ctx, missing)
 }
 
 func (a *PkgInstall) validateCasks() error {

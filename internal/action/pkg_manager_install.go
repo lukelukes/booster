@@ -22,8 +22,6 @@ type PkgManagerInstall struct {
 	Runner     cmdexec.Runner
 	PathFinder BrewPathFinder
 	Managers   []string
-
-	plan *helperPlan
 }
 
 func NewPkgManagerInstall(args yaml.Node, ctx *expr.Context, runner cmdexec.Runner) (*PkgManagerInstall, error) {
@@ -66,9 +64,6 @@ func (a *PkgManagerInstall) Check(ctx context.Context) (model.Change, error) {
 			continue
 		}
 		change.Items = append(change.Items, model.Item{Name: manager})
-		if _, aur := aurHelperRepos[manager]; aur && a.plan != nil {
-			a.plan.pending = true
-		}
 	}
 
 	if len(change.Items) > 0 {

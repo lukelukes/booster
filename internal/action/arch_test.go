@@ -1,7 +1,11 @@
-package action
+package action_test
 
 import (
+	"booster/internal/action"
+	"booster/internal/config"
+	"booster/internal/expr"
 	"booster/internal/model"
+	"booster/internal/run"
 	"context"
 	"errors"
 	"slices"
@@ -14,11 +18,13 @@ import (
 )
 
 type fakeArch struct {
+	t         *testing.T
 	repo      []string
 	groups    []string
 	aur       []string
 	installed []string
 	binaries  []string
+	tools     map[string]string
 	commands  []string
 }
 
@@ -43,30 +49,43 @@ func (f *fakeArch) Run(_ context.Context, name string, args ...string) ([]byte, 
 			return nil, nil
 		}
 		return nil, errors.New("not installed")
+	case name == "mise" && len(args) == 2 && args[0] == "current":
+		if version, ok := f.tools[args[1]]; ok {
+			return []byte(version + "\n"), nil
+		}
+		return nil, errors.New("no version set")
 	}
 
 	f.commands = append(f.commands, command)
 
 	switch {
 	case name == "sudo" && len(args) > 0 && args[0] == "pacman":
-		return nil, f.install(args[4:], f.repo)
+		return nil, f.install(args[1:], f.repo)
 	case name == "paru" || name == "yay":
-		return nil, f.install(args[3:], append(slices.Clone(f.repo), f.aur...))
+		return nil, f.install(args, append(slices.Clone(f.repo), f.aur...))
+	case name == "git" && len(args) > 0 && args[0] == "clone":
+		return nil, nil
 	case name == "sh" && strings.Contains(command, "makepkg"):
-		for _, helper := range aurHelpers {
+		for _, helper := range []string{"paru", "yay"} {
 			if strings.Contains(command, "/"+helper+" ") {
 				f.binaries = append(f.binaries, helper)
 				f.installed = append(f.installed, helper)
 			}
 		}
+		return nil, nil
+	case name == "mise" && len(args) == 3 && args[0] == "use" && args[1] == "--global":
+		tool, version, _ := strings.Cut(args[2], "@")
+		f.tools[tool] = version
+		return nil, nil
 	}
 
-	return nil, nil
+	f.t.Errorf("unexpected command: %s", command)
+	return nil, errors.New("unexpected command: " + command)
 }
 
 func (f *fakeArch) install(args, available []string) error {
 	for _, pkg := range args {
-		if strings.HasPrefix(pkg, "--") {
+		if strings.HasPrefix(pkg, "-") {
 			continue
 		}
 		if !slices.Contains(available, pkg) {
@@ -77,82 +96,65 @@ func (f *fakeArch) install(args, available []string) error {
 	return nil
 }
 
-type archStep struct {
-	Action string    `yaml:"action"`
-	Args   yaml.Node `yaml:"args"`
-}
-
-func planArch(t *testing.T, machine *fakeArch, config string) ([]Action, []model.Change, error) {
+func planArch(t *testing.T, machine *fakeArch, src string) (run.PlanResult, error) {
 	t.Helper()
 
-	var steps []archStep
-	require.NoError(t, yaml.Unmarshal([]byte(config), &steps))
+	var cfg config.Config
+	require.NoError(t, yaml.Unmarshal([]byte(src), &cfg))
 
-	factories := map[string]Factory{}
-	h := newHost(machine)
-	factories["pkg-manager.install"] = h.pkgManagerInstall
-	factories["pkg.install"] = h.pkgInstall
+	ctx := &expr.Context{OS: "linux", Arch: "amd64", Home: "/home/test"}
+	compiled, err := run.Compile(cfg.Tasks, ctx, action.NewRegistry(machine))
+	require.NoError(t, err)
 
-	var actions []Action
-	var changes []model.Change
-	for _, step := range steps {
-		act, err := factories[step.Action](step.Args, testContext())
-		require.NoError(t, err)
-		actions = append(actions, act)
-	}
-	for _, act := range actions {
-		change, err := act.Check(context.Background())
-		if err != nil {
-			return nil, nil, err
+	return run.Plan(context.Background(), compiled)
+}
+
+func apply(t *testing.T, result run.PlanResult) {
+	t.Helper()
+
+	summary := run.Apply(context.Background(), result, func(e model.Event) {
+		if done, ok := e.(model.TaskDone); ok {
+			require.NoError(t, done.Result.Err)
 		}
-		changes = append(changes, change)
-	}
-
-	return actions, changes, nil
-}
-
-func applyAll(t *testing.T, actions []Action) {
-	t.Helper()
-
-	for _, act := range actions {
-		require.NoError(t, act.Apply(context.Background()))
-	}
+	})
+	assert.Zero(t, summary.Failed)
 }
 
 func TestArchPackages(t *testing.T) {
 	t.Run("a fresh box with only pacman installs repo packages through sudo pacman", func(t *testing.T) {
-		machine := &fakeArch{repo: []string{"fd", "ripgrep", "git"}, installed: []string{"git"}}
+		machine := &fakeArch{t: t, repo: []string{"fd", "ripgrep", "git"}, installed: []string{"git"}}
+		config := `
+tasks:
+  - action: pkg.install
+    args: [git, fd, ripgrep]
+`
 
-		actions, changes, err := planArch(t, machine, `
-- action: pkg.install
-  args: [git, fd, ripgrep]
-`)
+		result, err := planArch(t, machine, config)
 		require.NoError(t, err)
-		assert.Equal(t, model.ChangeCreate, changes[0].Kind)
-		assert.Equal(t, []model.Item{{Name: "fd"}, {Name: "ripgrep"}}, changes[0].Items)
-		assert.True(t, changes[0].NeedsSudo)
+		change := result.Steps[0].Change
+		assert.Equal(t, model.ChangeCreate, change.Kind)
+		assert.Equal(t, []model.Item{{Name: "fd"}, {Name: "ripgrep"}}, change.Items)
+		assert.True(t, change.NeedsSudo)
 
-		applyAll(t, actions)
+		apply(t, result)
 
 		assert.Equal(t, []string{"sudo pacman -S --noconfirm --needed fd ripgrep"}, machine.commands)
-		_, changes, err = planArch(t, machine, `
-- action: pkg.install
-  args: [git, fd, ripgrep]
-`)
+		result, err = planArch(t, machine, config)
 		require.NoError(t, err)
-		assert.Equal(t, model.ChangeNone, changes[0].Kind)
+		assert.Equal(t, model.ChangeNone, result.Steps[0].Change.Kind)
 	})
 
 	t.Run("package groups count as repo packages", func(t *testing.T) {
-		machine := &fakeArch{repo: []string{"fd"}, groups: []string{"base-devel"}}
+		machine := &fakeArch{t: t, repo: []string{"fd"}, groups: []string{"base-devel"}}
 
-		_, changes, err := planArch(t, machine, `
-- action: pkg.install
-  args: [base-devel, fd]
+		result, err := planArch(t, machine, `
+tasks:
+  - action: pkg.install
+    args: [base-devel, fd]
 `)
 
 		require.NoError(t, err)
-		assert.Len(t, changes[0].Items, 2)
+		assert.Len(t, result.Steps[0].Change.Items, 2)
 	})
 
 	helpers := []struct {
@@ -165,46 +167,50 @@ func TestArchPackages(t *testing.T) {
 	for _, tt := range helpers {
 		t.Run("installs through "+tt.helper+" when it is present", func(t *testing.T) {
 			machine := &fakeArch{
+				t:         t,
 				repo:      []string{"fd"},
 				aur:       []string{"zen-browser-bin"},
 				binaries:  []string{tt.helper},
 				installed: []string{tt.helper},
 			}
 
-			actions, changes, err := planArch(t, machine, `
-- action: pkg.install
-  args: [fd, zen-browser-bin]
+			result, err := planArch(t, machine, `
+tasks:
+  - action: pkg.install
+    args: [fd, zen-browser-bin]
 `)
 			require.NoError(t, err)
-			assert.Len(t, changes[0].Items, 2)
+			assert.Len(t, result.Steps[0].Change.Items, 2)
 
-			applyAll(t, actions)
+			apply(t, result)
 
 			assert.Equal(t, []string{tt.command}, machine.commands)
 		})
 	}
 
 	t.Run("prefers paru when both helpers are present", func(t *testing.T) {
-		machine := &fakeArch{repo: []string{"fd"}, binaries: []string{"yay", "paru"}}
+		machine := &fakeArch{t: t, repo: []string{"fd"}, binaries: []string{"yay", "paru"}}
 
-		actions, _, err := planArch(t, machine, `
-- action: pkg.install
-  args: [fd]
+		result, err := planArch(t, machine, `
+tasks:
+  - action: pkg.install
+    args: [fd]
 `)
 		require.NoError(t, err)
 
-		applyAll(t, actions)
+		apply(t, result)
 
 		require.Len(t, machine.commands, 1)
 		assert.True(t, strings.HasPrefix(machine.commands[0], "paru "))
 	})
 
 	t.Run("an AUR package without a helper fails the plan and names the package", func(t *testing.T) {
-		machine := &fakeArch{repo: []string{"fd"}, aur: []string{"zen-browser-bin", "obsidian-appimage"}}
+		machine := &fakeArch{t: t, repo: []string{"fd"}, aur: []string{"zen-browser-bin", "obsidian-appimage"}}
 
-		_, _, err := planArch(t, machine, `
-- action: pkg.install
-  args: [fd, zen-browser-bin, obsidian-appimage]
+		_, err := planArch(t, machine, `
+tasks:
+  - action: pkg.install
+    args: [fd, zen-browser-bin, obsidian-appimage]
 `)
 
 		require.Error(t, err)
@@ -215,33 +221,70 @@ func TestArchPackages(t *testing.T) {
 	})
 
 	t.Run("an AUR helper installed earlier in the same run covers AUR packages", func(t *testing.T) {
-		machine := &fakeArch{repo: []string{"fd"}, aur: []string{"zen-browser-bin"}}
+		machine := &fakeArch{t: t, repo: []string{"fd"}, aur: []string{"zen-browser-bin"}}
 
-		actions, changes, err := planArch(t, machine, `
-- action: pkg-manager.install
-  args: [yay]
-- action: pkg.install
-  args: [fd, zen-browser-bin]
+		result, err := planArch(t, machine, `
+tasks:
+  - action: pkg-manager.install
+    args: [yay]
+  - action: pkg.install
+    args: [fd, zen-browser-bin]
 `)
 		require.NoError(t, err)
-		assert.Equal(t, []model.Item{{Name: "yay"}}, changes[0].Items)
-		assert.Len(t, changes[1].Items, 2)
+		assert.Equal(t, []model.Item{{Name: "yay"}}, result.Steps[0].Change.Items)
+		assert.Len(t, result.Steps[1].Change.Items, 2)
 
-		applyAll(t, actions)
+		apply(t, result)
 
 		require.Len(t, machine.commands, 3)
 		assert.True(t, strings.HasPrefix(machine.commands[0], "git clone https://aur.archlinux.org/yay.git"))
 		assert.Equal(t, "yay -S --noconfirm --needed fd zen-browser-bin", machine.commands[2])
 	})
 
-	t.Run("homebrew in the same run does not cover AUR packages", func(t *testing.T) {
-		machine := &fakeArch{repo: []string{"fd"}, aur: []string{"zen-browser-bin"}}
+	t.Run("an AUR helper installed after the package step does not cover it", func(t *testing.T) {
+		machine := &fakeArch{t: t, repo: []string{"fd"}, aur: []string{"zen-browser-bin"}}
 
-		_, _, err := planArch(t, machine, `
-- action: pkg-manager.install
-  args: [homebrew]
-- action: pkg.install
-  args: [zen-browser-bin]
+		_, err := planArch(t, machine, `
+tasks:
+  - action: pkg.install
+    args: [zen-browser-bin]
+  - action: pkg-manager.install
+    args: [yay]
+`)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "zen-browser-bin")
+	})
+
+	t.Run("a helper planned in one registry does not cover another", func(t *testing.T) {
+		machine := &fakeArch{t: t, repo: []string{"fd"}, aur: []string{"zen-browser-bin"}}
+
+		_, err := planArch(t, machine, `
+tasks:
+  - action: pkg-manager.install
+    args: [yay]
+`)
+		require.NoError(t, err)
+
+		_, err = planArch(t, machine, `
+tasks:
+  - action: pkg.install
+    args: [zen-browser-bin]
+`)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "zen-browser-bin")
+	})
+
+	t.Run("homebrew in the same run does not cover AUR packages", func(t *testing.T) {
+		machine := &fakeArch{t: t, repo: []string{"fd"}, aur: []string{"zen-browser-bin"}}
+
+		_, err := planArch(t, machine, `
+tasks:
+  - action: pkg-manager.install
+    args: [homebrew]
+  - action: pkg.install
+    args: [zen-browser-bin]
 `)
 
 		require.Error(t, err)
@@ -249,10 +292,23 @@ func TestArchPackages(t *testing.T) {
 	})
 }
 
-func TestRegistry_PortedActions(t *testing.T) {
-	registry := Registry()
+func TestArchMiseUse(t *testing.T) {
+	machine := &fakeArch{t: t, binaries: []string{"mise"}, tools: map[string]string{"go": "1.25"}}
+	config := `
+tasks:
+  - action: mise.use
+    args: [go@1.26, node@22]
+`
 
-	for _, name := range []string{"template.render", "pkg-manager.install", "pkg.install", "mise.use"} {
-		assert.Contains(t, registry, name)
-	}
+	result, err := planArch(t, machine, config)
+	require.NoError(t, err)
+	assert.Equal(t, model.ChangeUpdate, result.Steps[0].Change.Kind)
+	assert.Equal(t, []model.Item{{Name: "go", From: "1.25", To: "1.26"}, {Name: "node", To: "22"}}, result.Steps[0].Change.Items)
+
+	apply(t, result)
+
+	assert.Equal(t, []string{"mise use --global go@1.26", "mise use --global node@22"}, machine.commands)
+	result, err = planArch(t, machine, config)
+	require.NoError(t, err)
+	assert.Equal(t, model.ChangeNone, result.Steps[0].Change.Kind)
 }

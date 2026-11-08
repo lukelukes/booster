@@ -4,18 +4,15 @@ import (
 	"booster/internal/cmdexec"
 	"context"
 	"fmt"
+	"strings"
 )
 
 var aurHelpers = []string{"paru", "yay"}
 
-type helperPlan struct {
-	pending bool
-}
-
 type PacmanManager struct {
 	Runner cmdexec.Runner
 
-	plan *helperPlan
+	helperPlanned bool
 }
 
 func NewPacmanManager(runner cmdexec.Runner) *PacmanManager {
@@ -67,21 +64,26 @@ func (m *PacmanManager) Install(ctx context.Context, pkgs []string) (string, err
 	return string(output), nil
 }
 
-func (m *PacmanManager) Uninstallable(ctx context.Context, pkgs []string) ([]string, error) {
-	if len(pkgs) == 0 || m.helper() != "" || (m.plan != nil && m.plan.pending) {
-		return nil, nil
+func (m *PacmanManager) Installable(ctx context.Context, pkgs []string) error {
+	if len(pkgs) == 0 || m.helperPlanned || m.helper() != "" {
+		return nil
 	}
 
 	repo, err := m.Runner.Run(ctx, "pacman", "-Slq")
 	if err != nil {
-		return nil, fmt.Errorf("list repo packages: %w", err)
+		return fmt.Errorf("list repo packages: %w", err)
 	}
 	groups, err := m.Runner.Run(ctx, "pacman", "-Sg")
 	if err != nil {
-		return nil, fmt.Errorf("list repo groups: %w", err)
+		return fmt.Errorf("list repo groups: %w", err)
 	}
 
-	return missingFrom(append(parseLines(string(repo)), parseLines(string(groups))...), pkgs), nil
+	missing := missingFrom(append(parseLines(string(repo)), parseLines(string(groups))...), pkgs)
+	if len(missing) > 0 {
+		return fmt.Errorf("not in the pacman repos and no AUR helper is installed: %s; add a pkg-manager.install step for paru or yay before this one", strings.Join(missing, ", "))
+	}
+
+	return nil
 }
 
 func (m *PacmanManager) helper() string {

@@ -29,15 +29,15 @@ type ApplyCmd struct {
 }
 
 type terminal struct {
-	in          io.Reader
-	out         io.Writer
-	openLog     func() (logFile, error)
-	interactive bool
-	sudo        func() error
-	sudoRunner  cmdexec.Runner
-	sudoTicks   <-chan time.Time
-	review      func(model.Plan, ui.Mode) (ui.Decision, error)
+	out        io.Writer
+	openLog    func() (logFile, error)
+	sudo       func() error
+	sudoRunner cmdexec.Runner
+	sudoTicks  <-chan time.Time
+	review     reviewFunc
 }
+
+type reviewFunc func(model.Plan, ui.Mode) (ui.Decision, error)
 
 type logFile interface {
 	io.WriteCloser
@@ -45,22 +45,45 @@ type logFile interface {
 }
 
 func newTerminal(cli *CLI, profile string, sudoTicks <-chan time.Time) terminal {
+	stdinTTY := isTerminal(os.Stdin)
 	term := terminal{
-		in:          os.Stdin,
-		out:         os.Stdout,
-		openLog:     func() (logFile, error) { return openLog(logDir()) },
-		interactive: isTerminal(os.Stdin),
-		sudo:        ensureSudo,
-		sudoRunner:  cmdexec.DefaultRunner(),
-		sudoTicks:   sudoTicks,
+		out:        os.Stdout,
+		openLog:    func() (logFile, error) { return openLog(logDir()) },
+		sudo:       ensureSudo,
+		sudoRunner: cmdexec.DefaultRunner(),
+		sudoTicks:  sudoTicks,
+		review:     plainReview(os.Stdin, os.Stdout, stdinTTY),
 	}
-	if term.interactive && isTerminal(os.Stdout) && os.Getenv("NO_COLOR") == "" {
+	if useTUI(stdinTTY, isTerminal(os.Stdout), os.Getenv("NO_COLOR")) {
 		header := reviewHeader(cli.Config, profile)
 		term.review = func(p model.Plan, mode ui.Mode) (ui.Decision, error) {
 			return ui.Review(os.Stdin, os.Stdout, header, p, mode)
 		}
 	}
 	return term
+}
+
+func useTUI(stdinTTY, stdoutTTY bool, noColor string) bool {
+	return stdinTTY && stdoutTTY && noColor == ""
+}
+
+func plainReview(in io.Reader, out io.Writer, interactive bool) reviewFunc {
+	return func(p model.Plan, mode ui.Mode) (ui.Decision, error) {
+		if err := ui.RenderPlan(out, p); err != nil {
+			return ui.Decision{}, err
+		}
+		if mode == ui.ModeDrift {
+			return ui.Decision{}, nil
+		}
+		ok, err := confirm(in, out, interactive)
+		return ui.Decision{Apply: ok}, err
+	}
+}
+
+func showPlan(out io.Writer, apply bool) reviewFunc {
+	return func(p model.Plan, _ ui.Mode) (ui.Decision, error) {
+		return ui.Decision{Apply: apply}, ui.RenderPlan(out, p)
+	}
 }
 
 func reviewHeader(config, profile string) ui.Header {
@@ -89,27 +112,19 @@ func (c *ApplyCmd) run(ctx context.Context, cli *CLI, term terminal) error {
 
 func (c *ApplyCmd) applyPlan(ctx context.Context, plan run.PlanResult, term terminal) error {
 	view := plan.View()
-	if term.review != nil && !c.Yes && view.HasChanges() {
-		decision, err := term.review(view, ui.ModeApply)
-		if err != nil {
-			return err
-		}
-		if !decision.Apply {
-			fmt.Fprintln(term.out, "cancelled, nothing changed")
-			return nil
-		}
-		return execute(ctx, plan.Without(decision.Skip), term)
+	review := term.review
+	if c.Yes || !view.HasChanges() {
+		review = showPlan(term.out, true)
 	}
-
-	if err := ui.RenderPlan(term.out, view); err != nil {
+	decision, err := review(view, ui.ModeApply)
+	if err != nil {
 		return err
 	}
-	if view.HasChanges() && !c.Yes {
-		if ok, err := confirm(term); err != nil || !ok {
-			return err
-		}
+	if !decision.Apply {
+		fmt.Fprintln(term.out, "cancelled, nothing changed")
+		return nil
 	}
-	return execute(ctx, plan, term)
+	return execute(ctx, plan.Without(decision.Skip), term)
 }
 
 func execute(ctx context.Context, plan run.PlanResult, term terminal) error {
@@ -177,13 +192,13 @@ func (l *runLog) Close() error {
 	return l.err
 }
 
-func confirm(term terminal) (bool, error) {
-	if !term.interactive {
+func confirm(in io.Reader, out io.Writer, interactive bool) (bool, error) {
+	if !interactive {
 		return false, errNotConfirmed
 	}
 
-	fmt.Fprint(term.out, "\napply these changes? [y/N] ")
-	line, err := bufio.NewReader(term.in).ReadString('\n')
+	fmt.Fprint(out, "\napply these changes? [y/N] ")
+	line, err := bufio.NewReader(in).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return false, err
 	}
@@ -192,7 +207,6 @@ func confirm(term terminal) (bool, error) {
 	case "y", "yes":
 		return true, nil
 	default:
-		fmt.Fprintln(term.out, "cancelled, nothing changed")
 		return false, nil
 	}
 }

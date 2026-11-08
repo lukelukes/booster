@@ -108,3 +108,25 @@ func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
 }
+
+func TestUseTUI(t *testing.T) {
+	tests := []struct {
+		name      string
+		stdinTTY  bool
+		stdoutTTY bool
+		noColor   string
+		want      bool
+	}{
+		{name: "both terminals", stdinTTY: true, stdoutTTY: true, want: true},
+		{name: "NO_COLOR set", stdinTTY: true, stdoutTTY: true, noColor: "1"},
+		{name: "stdin piped", stdoutTTY: true},
+		{name: "stdout piped", stdinTTY: true},
+		{name: "neither terminal"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, useTUI(tt.stdinTTY, tt.stdoutTTY, tt.noColor))
+		})
+	}
+}

@@ -35,21 +35,17 @@ func (c *PlanCmd) run(ctx context.Context, cli *CLI, term terminal) error {
 	}
 
 	view := plan.View()
-	if term.review != nil && view.HasChanges() {
-		decision, err := term.review(view, ui.ModeDrift)
-		if err != nil {
-			return err
-		}
-		if decision.Apply {
-			return execute(ctx, plan.Without(decision.Skip), term)
-		}
-		return errChangesPending
+	review := term.review
+	if !view.HasChanges() {
+		review = showPlan(term.out, false)
 	}
-
-	if err := ui.RenderPlan(term.out, view); err != nil {
+	decision, err := review(view, ui.ModeDrift)
+	if err != nil {
 		return err
 	}
-
+	if decision.Apply {
+		return execute(ctx, plan.Without(decision.Skip), term)
+	}
 	if view.HasChanges() {
 		return errChangesPending
 	}

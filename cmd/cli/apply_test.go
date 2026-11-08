@@ -92,7 +92,6 @@ func (ft *fakeTerminal) terminal(t *testing.T, input string, interactive bool) t
 		ft.sudoRunner = &cmdexec.MockRunner{}
 	}
 	return terminal{
-		in:  strings.NewReader(input),
 		out: &ft.out,
 		openLog: func() (logFile, error) {
 			if ft.log != nil {
@@ -101,13 +100,13 @@ func (ft *fakeTerminal) terminal(t *testing.T, input string, interactive bool) t
 			}
 			return openLog(ft.logDir)
 		},
-		interactive: interactive,
 		sudo: func() error {
 			ft.events = append(ft.events, "sudo")
 			return ft.sudoErr
 		},
 		sudoRunner: ft.sudoRunner,
 		sudoTicks:  ft.sudoTicks,
+		review:     plainReview(strings.NewReader(input), &ft.out, interactive),
 	}
 }
 
@@ -189,6 +188,7 @@ func TestApplyCmd(t *testing.T) {
 			for _, want := range tt.wantOut {
 				assert.Contains(t, ft.out.String(), want)
 			}
+			assert.LessOrEqual(t, strings.Count(ft.out.String(), "cancelled"), 1)
 			if tt.wantApplied {
 				assert.DirExists(t, f.newDir)
 				target, err := os.Readlink(f.link)

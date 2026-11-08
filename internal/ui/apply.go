@@ -197,7 +197,7 @@ func (a *applyScreen) changes() (total, finished int) {
 			continue
 		}
 		total++
-		if a.results[i] != nil {
+		if r := a.results[i]; r != nil && r.Status != model.StatusSkipped {
 			finished++
 		}
 	}

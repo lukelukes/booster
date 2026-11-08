@@ -125,6 +125,22 @@ func TestApply_Frames(t *testing.T) {
 			ev(3725, done(4, model.StatusChanged, 3524*time.Second)),
 			ev(3725, model.RunDone{Summary: model.Summary{Total: 5, Changed: 4, OK: 1, Duration: 3725 * time.Second}}),
 		})},
+		{name: "stopped before the first step shows no progress", steps: []at{
+			ev(0, model.RunStart{Total: 5}),
+			key(1, ctrlC),
+			ev(1, model.TaskDone{Index: 0, Result: model.Result{Status: model.StatusSkipped, Reason: "not run"}}),
+			ev(1, model.TaskDone{Index: 1, Result: model.Result{Status: model.StatusSkipped, Reason: "not run"}}),
+			ev(1, model.TaskDone{Index: 2, Result: model.Result{Status: model.StatusSkipped, Reason: "not run"}}),
+			ev(1, model.TaskDone{Index: 3, Result: model.Result{Status: model.StatusSkipped, Reason: "not run"}}),
+			ev(1, model.TaskDone{Index: 4, Result: model.Result{Status: model.StatusSkipped, Reason: "not run"}}),
+		}},
+		{name: "steps that did not run do not advance progress", steps: seq(started, []at{
+			key(110, ctrlC),
+			ev(150, done(1, model.StatusChanged, 42*time.Second)),
+			ev(150, model.TaskDone{Index: 2, Result: model.Result{Status: model.StatusSkipped, Reason: "not run"}}),
+			ev(150, model.TaskDone{Index: 3, Result: model.Result{Status: model.StatusSkipped, Reason: "not run"}}),
+			ev(150, model.TaskDone{Index: 4, Result: model.Result{Status: model.StatusSkipped, Reason: "not run"}}),
+		})},
 		{name: "stopped between steps counts only the applied changes", steps: seq(started, []at{
 			key(110, ctrlC),
 			ev(150, done(1, model.StatusChanged, 42*time.Second)),

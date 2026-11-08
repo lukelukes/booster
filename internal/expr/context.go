@@ -8,9 +8,10 @@ import (
 )
 
 type Context struct {
-	OS   string `expr:"os"`
-	Arch string `expr:"arch"`
-	Home string `expr:"home"`
+	OS       string `expr:"os"`
+	OSFamily string `expr:"os_family"`
+	Arch     string `expr:"arch"`
+	Home     string `expr:"home"`
 
 	Profile string `expr:"profile"`
 
@@ -21,11 +22,12 @@ type Context struct {
 
 func NewContext() *Context {
 	return &Context{
-		OS:   detectOS(),
-		Arch: runtime.GOARCH,
-		Home: os.Getenv("HOME"),
-		Env:  envToMap(),
-		Vars: make(map[string]any),
+		OS:       detectOS(),
+		OSFamily: runtime.GOOS,
+		Arch:     runtime.GOARCH,
+		Home:     os.Getenv("HOME"),
+		Env:      envToMap(),
+		Vars:     make(map[string]any),
 	}
 }
 

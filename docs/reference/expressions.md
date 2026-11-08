@@ -26,6 +26,7 @@ args:
 | Variable | Type | Description |
 |---|---|---|
 | `os` | string | Detected OS. On macOS: `"darwin"`. On Linux: distro ID from `/etc/os-release` (e.g., `"arch"`, `"ubuntu"`, `"fedora"`). Falls back to `runtime.GOOS`. |
+| `os_family` | string | Broad platform from `runtime.GOOS`: `"linux"` or `"darwin"`. Use it to branch on the platform regardless of distro. |
 | `arch` | string | CPU architecture from `runtime.GOARCH` (e.g., `"amd64"`, `"arm64"`). |
 | `home` | string | Value of `$HOME` environment variable. |
 | `profile` | string | Selected profile from `--profile` flag. Empty string if no profiles defined. |
@@ -63,6 +64,7 @@ The `when` field requires the expression to evaluate to bool.
 
 ```yaml
 ${ os == "darwin" }
+${ os_family == "linux" }
 ${ profile in ["work", "personal"] }
 ${ exists(home + "/.config") }
 ${ installed("git") }

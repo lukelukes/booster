@@ -1,6 +1,7 @@
 package main
 
 import (
+	"booster/internal/cmdexec"
 	"booster/internal/model"
 	"booster/internal/run"
 	"booster/internal/ui"
@@ -10,8 +11,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mattn/go-isatty"
@@ -30,6 +33,8 @@ type terminal struct {
 	openLog     func() (logFile, error)
 	interactive bool
 	sudo        func() error
+	sudoRunner  cmdexec.Runner
+	sudoTicks   <-chan time.Time
 }
 
 type logFile interface {
@@ -38,24 +43,28 @@ type logFile interface {
 }
 
 func (c *ApplyCmd) Run(cli *CLI) error {
-	return c.run(cli, terminal{
+	ticker := time.NewTicker(run.SudoRefreshInterval)
+	defer ticker.Stop()
+	return c.run(context.Background(), cli, terminal{
 		in:          os.Stdin,
 		out:         os.Stdout,
 		openLog:     func() (logFile, error) { return openLog(logDir()) },
 		interactive: isTerminal(os.Stdin),
 		sudo:        ensureSudo,
+		sudoRunner:  cmdexec.DefaultRunner(),
+		sudoTicks:   ticker.C,
 	})
 }
 
-func (c *ApplyCmd) run(cli *CLI, term terminal) error {
-	plan, err := buildPlan(cli, c.Profile)
+func (c *ApplyCmd) run(ctx context.Context, cli *CLI, term terminal) error {
+	plan, err := buildPlan(ctx, cli, c.Profile)
 	if err != nil {
 		return err
 	}
-	return c.applyPlan(plan, term)
+	return c.applyPlan(ctx, plan, term)
 }
 
-func (c *ApplyCmd) applyPlan(plan run.PlanResult, term terminal) error {
+func (c *ApplyCmd) applyPlan(ctx context.Context, plan run.PlanResult, term terminal) error {
 	view := plan.View()
 	if err := ui.RenderPlan(term.out, view); err != nil {
 		return err
@@ -73,7 +82,7 @@ func (c *ApplyCmd) applyPlan(plan run.PlanResult, term terminal) error {
 	log := &runLog{file: file}
 	var applyErr error
 	if err := ui.RenderPlan(log, view); err == nil && view.HasChanges() {
-		applyErr = applySteps(plan, view, term.out, log)
+		applyErr = applySteps(ctx, plan, view, term, log)
 	}
 	fmt.Fprintf(term.out, "log: %s\n", file.Name())
 	return errors.Join(applyErr, log.Close())
@@ -94,12 +103,21 @@ func (c *ApplyCmd) approve(view model.Plan, term terminal) (bool, error) {
 	return true, nil
 }
 
-func applySteps(plan run.PlanResult, view model.Plan, out, log io.Writer) error {
-	screen, logged := ui.Progress(out, view), ui.Progress(log, view)
-	summary := run.Apply(context.Background(), plan, func(e model.Event) {
+func applySteps(ctx context.Context, plan run.PlanResult, view model.Plan, term terminal, log io.Writer) error {
+	ctx, stopSignals := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	if view.NeedsSudo() {
+		stop := run.KeepSudoAlive(ctx, term.sudoRunner, term.sudoTicks)
+		defer stop()
+	}
+	screen, logged := ui.Progress(term.out, view), ui.Progress(log, view)
+	summary := run.Apply(ctx, plan, func(e model.Event) {
 		screen(e)
 		logged(e)
 	})
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("apply interrupted: %w", err)
+	}
 	if summary.Failed > 0 {
 		return fmt.Errorf("apply: %d of %d steps failed", summary.Failed, summary.Total)
 	}

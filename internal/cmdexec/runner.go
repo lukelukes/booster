@@ -3,9 +3,14 @@ package cmdexec
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os/exec"
+	"syscall"
+	"time"
 )
+
+const killGrace = 2 * time.Second
 
 type Runner interface {
 	Run(ctx context.Context, name string, args ...string) ([]byte, error)
@@ -30,6 +35,12 @@ type RealRunner struct {
 
 func (r *RealRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		_ = signalGroup(cmd.Process.Pid, syscall.SIGTERM)
+		return signalGroup(cmd.Process.Pid, syscall.SIGCONT)
+	}
+	cmd.WaitDelay = killGrace
 	var out bytes.Buffer
 
 	writers := []io.Writer{&out}
@@ -46,10 +57,20 @@ func (r *RealRunner) Run(ctx context.Context, name string, args ...string) ([]by
 	cmd.Stdout = w
 	cmd.Stderr = w
 	err := cmd.Run()
+	if cmd.Process != nil {
+		_ = signalGroup(cmd.Process.Pid, syscall.SIGKILL)
+	}
 	if lines != nil {
 		lines.flush()
 	}
 	return out.Bytes(), err
+}
+
+func signalGroup(pgid int, sig syscall.Signal) error {
+	if err := syscall.Kill(-pgid, sig); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return err
+	}
+	return nil
 }
 
 func (r *RealRunner) LookPath(name string) (string, error) {

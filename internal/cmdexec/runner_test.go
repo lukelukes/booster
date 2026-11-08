@@ -2,8 +2,13 @@ package cmdexec
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -81,4 +86,150 @@ func TestRealRunner_WithoutASinkOnlyReturnsOutput(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "quiet\n", string(out))
+}
+
+func TestRealRunner_CancelStopsTheWholeProcessGroup(t *testing.T) {
+	tests := []struct {
+		name   string
+		script string
+		within time.Duration
+	}{
+		{name: "children that exit on SIGTERM", script: `sleep 1000 & echo $!; wait`, within: time.Second},
+		{name: "children that ignore SIGTERM", script: `trap '' TERM; sleep 1000 & echo $!; wait`, within: killGrace + time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pids := make(chan string, 1)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ctx = WithLineSink(ctx, func(line string) { pids <- line })
+			done := make(chan error, 1)
+			go func() {
+				_, err := DefaultRunner().Run(ctx, "sh", "-c", tt.script)
+				done <- err
+			}()
+			child := readPID(t, pids)
+			t.Cleanup(func() { _ = syscall.Kill(child, syscall.SIGKILL) })
+
+			cancel()
+
+			select {
+			case err := <-done:
+				require.Error(t, err)
+			case <-time.After(tt.within):
+				t.Fatal("Run kept waiting after the context was cancelled")
+			}
+			assert.Eventually(t, func() bool {
+				return errors.Is(syscall.Kill(child, 0), syscall.ESRCH)
+			}, 2*time.Second, 10*time.Millisecond, "the child outlived the cancelled command")
+		})
+	}
+}
+
+func TestRealRunner_StopsChildrenLeftBehindByAnExitedParent(t *testing.T) {
+	tests := []struct {
+		name   string
+		exit   int
+		cancel bool
+	}{
+		{name: "parent exits 0", exit: 0},
+		{name: "parent exits 0, then cancelled", exit: 0, cancel: true},
+		{name: "parent exits 1", exit: 1},
+		{name: "parent exits 1, then cancelled", exit: 1, cancel: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pids := make(chan string, 2)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ctx = WithLineSink(ctx, func(line string) { pids <- line })
+			done := make(chan error, 1)
+			go func() {
+				_, err := DefaultRunner().Run(ctx, "sh", "-c", `echo $$; sleep 1000 & echo $!; exit "$1"`, "sh", strconv.Itoa(tt.exit))
+				done <- err
+			}()
+			parent, child := readPID(t, pids), readPID(t, pids)
+			t.Cleanup(func() { _ = syscall.Kill(child, syscall.SIGKILL) })
+			require.Eventually(t, func() bool {
+				return errors.Is(syscall.Kill(parent, 0), syscall.ESRCH)
+			}, 5*time.Second, 10*time.Millisecond, "the parent never exited")
+
+			if tt.cancel {
+				cancel()
+			}
+
+			select {
+			case err := <-done:
+				require.Error(t, err)
+				assert.Equal(t, tt.exit, exitCode(err))
+			case <-time.After(killGrace + time.Second):
+				t.Fatal("Run kept waiting on the child holding its output")
+			}
+			assert.Eventually(t, func() bool {
+				return errors.Is(syscall.Kill(child, 0), syscall.ESRCH)
+			}, 2*time.Second, 10*time.Millisecond, "the child outlived its command")
+		})
+	}
+}
+
+func TestRealRunner_CancelEndsACommandStoppedByTerminalAccess(t *testing.T) {
+	tests := []struct {
+		name   string
+		script string
+		within time.Duration
+	}{
+		{name: "exits on SIGTERM once continued", script: `echo $$; kill -TTIN $$; sleep 1000`, within: time.Second},
+		{name: "ignores SIGTERM", script: `trap '' TERM; echo $$; kill -TTIN $$; sleep 1000`, within: killGrace + time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pids := make(chan string, 1)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ctx = WithLineSink(ctx, func(line string) { pids <- line })
+			done := make(chan error, 1)
+			go func() {
+				_, err := DefaultRunner().Run(ctx, "sh", "-c", tt.script)
+				done <- err
+			}()
+			pid := readPID(t, pids)
+			t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
+			require.Eventually(t, func() bool {
+				out, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+				return err == nil && strings.HasPrefix(strings.TrimSpace(string(out)), "T")
+			}, 5*time.Second, 10*time.Millisecond, "the command never stopped")
+
+			cancel()
+
+			select {
+			case err := <-done:
+				require.Error(t, err)
+			case <-time.After(tt.within):
+				t.Fatal("Run kept waiting on a stopped command after the context was cancelled")
+			}
+		})
+	}
+}
+
+func readPID(t *testing.T, lines <-chan string) int {
+	t.Helper()
+	select {
+	case line := <-lines:
+		pid, err := strconv.Atoi(line)
+		require.NoError(t, err)
+		return pid
+	case <-time.After(5 * time.Second):
+		t.Fatal("the command never printed its pid")
+		return 0
+	}
+}
+
+func exitCode(err error) int {
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
+		return exitErr.ExitCode()
+	}
+	return 0
 }

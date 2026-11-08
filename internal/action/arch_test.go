@@ -68,8 +68,8 @@ func (f *fakeArch) Run(_ context.Context, name string, args ...string) ([]byte, 
 	f.commands = append(f.commands, command)
 
 	switch {
-	case name == "sudo" && len(args) > 0 && args[0] == "pacman":
-		return nil, f.install(args[1:], f.repo)
+	case strings.HasPrefix(command, "sudo -n pacman "):
+		return nil, f.install(args[2:], f.repo)
 	case name == "paru" || name == "yay":
 		return nil, f.install(args, append(slices.Clone(f.repo), f.aur...))
 	case name == "git" && len(args) > 0 && args[0] == "clone":
@@ -147,7 +147,7 @@ tasks:
 
 		apply(t, result)
 
-		assert.Equal(t, []string{"sudo pacman -S --noconfirm --needed fd ripgrep"}, machine.commands)
+		assert.Equal(t, []string{"sudo -n pacman -S --noconfirm --needed fd ripgrep"}, machine.commands)
 		result, err = planArch(t, machine, config)
 		require.NoError(t, err)
 		assert.Equal(t, model.ChangeNone, result.Steps[0].Change.Kind)
@@ -172,7 +172,7 @@ tasks:
 
 		apply(t, result)
 
-		assert.Equal(t, []string{"sudo pacman -S --noconfirm --needed autoconf make fd"}, machine.commands)
+		assert.Equal(t, []string{"sudo -n pacman -S --noconfirm --needed autoconf make fd"}, machine.commands)
 		result, err = planArch(t, machine, config)
 		require.NoError(t, err)
 		assert.Equal(t, model.ChangeNone, result.Steps[0].Change.Kind)

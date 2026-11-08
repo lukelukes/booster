@@ -1,6 +1,7 @@
 package main
 
 import (
+	"booster/internal/action"
 	"booster/internal/cmdexec"
 	"booster/internal/model"
 	"booster/internal/run"
@@ -9,11 +10,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
 type applyFixture struct {
@@ -52,11 +56,13 @@ tasks:
 }
 
 type fakeTerminal struct {
-	out     strings.Builder
-	logDir  string
-	events  []string
-	sudoErr error
-	log     *brokenLog
+	out        strings.Builder
+	logDir     string
+	events     []string
+	sudoErr    error
+	log        *brokenLog
+	sudoRunner cmdexec.Runner
+	sudoTicks  chan time.Time
 }
 
 type brokenLog struct {
@@ -82,6 +88,9 @@ func (ft *fakeTerminal) terminal(t *testing.T, input string, interactive bool) t
 	if ft.logDir == "" {
 		ft.logDir = t.TempDir()
 	}
+	if ft.sudoRunner == nil {
+		ft.sudoRunner = &cmdexec.MockRunner{}
+	}
 	return terminal{
 		in:  strings.NewReader(input),
 		out: &ft.out,
@@ -97,6 +106,8 @@ func (ft *fakeTerminal) terminal(t *testing.T, input string, interactive bool) t
 			ft.events = append(ft.events, "sudo")
 			return ft.sudoErr
 		},
+		sudoRunner: ft.sudoRunner,
+		sudoTicks:  ft.sudoTicks,
 	}
 }
 
@@ -108,8 +119,9 @@ func (ft *fakeTerminal) planned(name string, change model.Change) run.Planned {
 }
 
 type fakeAction struct {
-	name   string
-	events *[]string
+	name    string
+	events  *[]string
+	onApply func() error
 }
 
 func (a *fakeAction) Name() string { return a.name }
@@ -120,6 +132,9 @@ func (a *fakeAction) Check(context.Context) (model.Change, error) {
 
 func (a *fakeAction) Apply(context.Context) error {
 	*a.events = append(*a.events, "apply "+a.name)
+	if a.onApply != nil {
+		return a.onApply()
+	}
 	return nil
 }
 
@@ -164,7 +179,7 @@ func TestApplyCmd(t *testing.T) {
 			f := newApplyFixture(t)
 			var ft fakeTerminal
 
-			err := (&ApplyCmd{Yes: tt.yes}).run(f.cli, ft.terminal(t, tt.input, tt.interactive))
+			err := (&ApplyCmd{Yes: tt.yes}).run(t.Context(), f.cli, ft.terminal(t, tt.input, tt.interactive))
 
 			if tt.wantErr != nil {
 				require.ErrorIs(t, err, tt.wantErr)
@@ -199,7 +214,7 @@ func TestApplyCmd_FailedStepStopsTheRun(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(home, 0o755) })
 	var ft fakeTerminal
 
-	err := (&ApplyCmd{Yes: true}).run(f.cli, ft.terminal(t, "", false))
+	err := (&ApplyCmd{Yes: true}).run(t.Context(), f.cli, ft.terminal(t, "", false))
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "1 of 2 steps failed")
@@ -209,15 +224,212 @@ func TestApplyCmd_FailedStepStopsTheRun(t *testing.T) {
 	assert.NoFileExists(t, f.link)
 }
 
-func TestApplyCmd_AsksForSudoOnceBeforeApplying(t *testing.T) {
-	var ft fakeTerminal
+func TestApplyCmd_RefreshesSudoOnlyWhileApplying(t *testing.T) {
 	needsSudo := model.Change{Kind: model.ChangeCreate, Verb: "install", NeedsSudo: true}
-	plan := run.PlanResult{Steps: []run.Planned{ft.planned("a", needsSudo), ft.planned("b", needsSudo)}}
+	noSudo := model.Change{Kind: model.ChangeCreate, Verb: "create"}
+	upToDateSudo := model.Change{Kind: model.ChangeNone, NeedsSudo: true}
+	tests := []struct {
+		name        string
+		changes     []model.Change
+		finish      func(cancel context.CancelFunc) error
+		wantRefresh bool
+		wantEvents  []string
+		wantErr     string
+		wantOut     string
+	}{
+		{
+			name:        "completed",
+			changes:     []model.Change{needsSudo, needsSudo},
+			wantRefresh: true,
+			wantEvents:  []string{"sudo", "apply a", "apply b"},
+			wantOut:     "2 changed · 0 up to date",
+		},
+		{
+			name:        "failed",
+			changes:     []model.Change{needsSudo, needsSudo},
+			finish:      func(context.CancelFunc) error { return errors.New("exit status 1") },
+			wantRefresh: true,
+			wantEvents:  []string{"sudo", "apply a"},
+			wantErr:     "1 of 2 steps failed",
+			wantOut:     "- b  not run",
+		},
+		{
+			name:        "interrupted",
+			changes:     []model.Change{needsSudo, needsSudo},
+			finish:      func(cancel context.CancelFunc) error { cancel(); return nil },
+			wantRefresh: true,
+			wantEvents:  []string{"sudo", "apply a"},
+			wantErr:     "apply interrupted: context canceled",
+			wantOut:     "- b  not run",
+		},
+		{
+			name:       "only changes without sudo",
+			changes:    []model.Change{noSudo},
+			wantEvents: []string{"apply a"},
+			wantOut:    "1 changed · 0 up to date",
+		},
+		{
+			name:       "sudo step already up to date",
+			changes:    []model.Change{noSudo, upToDateSudo},
+			wantEvents: []string{"apply a"},
+			wantOut:    "1 changed · 1 up to date",
+		},
+	}
 
-	err := (&ApplyCmd{Yes: true}).applyPlan(plan, ft.terminal(t, "", false))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			refreshes := make(chan []string, 10)
+			ft := fakeTerminal{
+				sudoTicks: make(chan time.Time, 1),
+				sudoRunner: &cmdexec.MockRunner{RunFunc: func(_ context.Context, name string, args ...string) ([]byte, error) {
+					refreshes <- append([]string{name}, args...)
+					return nil, nil
+				}},
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var plan run.PlanResult
+			for i, change := range tt.changes {
+				plan.Steps = append(plan.Steps, ft.planned(string(rune('a'+i)), change))
+			}
+			plan.Steps[0].Action.(*fakeAction).onApply = func() error {
+				ft.sudoTicks <- time.Time{}
+				if tt.wantRefresh {
+					select {
+					case call := <-refreshes:
+						assert.Equal(t, []string{"sudo", "-n", "-v"}, call)
+					case <-time.After(5 * time.Second):
+						t.Error("sudo was not refreshed while applying")
+					}
+				} else {
+					assert.Never(t, func() bool { return len(ft.sudoTicks) == 0 }, 100*time.Millisecond, 10*time.Millisecond, "sudo refresher ran while no planned change needed sudo")
+				}
+				if tt.finish != nil {
+					return tt.finish(cancel)
+				}
+				return nil
+			}
 
+			err := (&ApplyCmd{Yes: true}).applyPlan(ctx, plan, ft.terminal(t, "", false))
+
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tt.wantEvents, ft.events)
+			assert.Contains(t, ft.out.String(), tt.wantOut)
+			select {
+			case ft.sudoTicks <- time.Time{}:
+			default:
+			}
+			assert.Empty(t, refreshes, "sudo was refreshed when no running change needed it")
+			assert.Len(t, ft.sudoTicks, 1)
+		})
+	}
+}
+
+func TestApplyCmd_SudoRunsInBoostersSessionInItsOwnGroup(t *testing.T) {
+	exe, err := os.Executable()
 	require.NoError(t, err)
-	assert.Equal(t, []string{"sudo", "apply a", "apply b"}, ft.events)
+	bin := t.TempDir()
+	for _, name := range []string{"sudo", "pacman"} {
+		require.NoError(t, os.Symlink(exe, filepath.Join(bin, name)))
+	}
+	records := filepath.Join(t.TempDir(), "sudo.log")
+	t.Setenv("PATH", bin)
+	t.Setenv(fakeSudoLogEnv, records)
+	t.Setenv("GORACE", "atexit_sleep_ms=0")
+
+	var ft fakeTerminal
+	ticks := make(chan time.Time, 1)
+	term := ft.terminal(t, "", false)
+	term.sudo = ensureSudo
+	term.sudoRunner = cmdexec.DefaultRunner()
+	term.sudoTicks = ticks
+	plan := run.PlanResult{Steps: []run.Planned{
+		ft.planned("pkgs", model.Change{Kind: model.ChangeCreate, Verb: "install", NeedsSudo: true}),
+	}}
+	plan.Steps[0].Action.(*fakeAction).onApply = func() error {
+		ticks <- time.Time{}
+		assert.Eventually(t, func() bool {
+			return len(readSudoRecords(t, records)) == 2
+		}, 5*time.Second, 10*time.Millisecond, "sudo was not refreshed while applying")
+		_, err := action.NewPacmanManager(cmdexec.DefaultRunner()).Install(t.Context(), []string{"fd"})
+		return err
+	}
+
+	require.NoError(t, (&ApplyCmd{Yes: true}).applyPlan(t.Context(), plan, term))
+
+	got := readSudoRecords(t, records)
+	require.Len(t, got, 3)
+	assert.Equal(t, []string{"-n true", "-n -v", "-n pacman -S --noconfirm --needed fd"},
+		[]string{got[0].args, got[1].args, got[2].args})
+	session, err := unix.Getsid(0)
+	require.NoError(t, err)
+	for _, r := range got {
+		assert.Equal(t, session, r.sid, "sudo %s ran outside booster's session", r.args)
+	}
+	for _, r := range got[1:] {
+		assert.Equal(t, r.pid, r.pgid, "sudo %s does not lead its own process group", r.args)
+		assert.NotEqual(t, unix.Getpgrp(), r.pgid, "sudo %s shares booster's process group", r.args)
+	}
+}
+
+const fakeSudoLogEnv = "BOOSTER_TEST_FAKE_SUDO_LOG"
+
+func TestMain(m *testing.M) {
+	if records := os.Getenv(fakeSudoLogEnv); records != "" {
+		os.Exit(fakeSudo(records))
+	}
+	os.Exit(m.Run())
+}
+
+func fakeSudo(records string) int {
+	if filepath.Base(os.Args[0]) != "sudo" {
+		return 0
+	}
+	sid, err := unix.Getsid(0)
+	if err != nil {
+		return 1
+	}
+	f, err := os.OpenFile(records, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return 1
+	}
+	defer f.Close()
+	if _, err := fmt.Fprintf(f, "%d %d %d %s\n", sid, unix.Getpgrp(), os.Getpid(), strings.Join(os.Args[1:], " ")); err != nil {
+		return 1
+	}
+	return 0
+}
+
+type sudoRecord struct {
+	sid, pgid, pid int
+	args           string
+}
+
+func readSudoRecords(t *testing.T, path string) []sudoRecord {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	require.NoError(t, err)
+	var records []sudoRecord
+	for line := range strings.Lines(string(data)) {
+		var r sudoRecord
+		fields := strings.SplitN(strings.TrimSpace(line), " ", 4)
+		require.Len(t, fields, 4)
+		for i, n := range []*int{&r.sid, &r.pgid, &r.pid} {
+			*n, err = strconv.Atoi(fields[i])
+			require.NoError(t, err)
+		}
+		r.args = fields[3]
+		records = append(records, r)
+	}
+	return records
 }
 
 func TestApplyCmd_SudoRefusedAppliesNothing(t *testing.T) {
@@ -226,7 +438,7 @@ func TestApplyCmd_SudoRefusedAppliesNothing(t *testing.T) {
 		ft.planned("a", model.Change{Kind: model.ChangeCreate, NeedsSudo: true}),
 	}}
 
-	err := (&ApplyCmd{Yes: true}).applyPlan(plan, ft.terminal(t, "", false))
+	err := (&ApplyCmd{Yes: true}).applyPlan(t.Context(), plan, ft.terminal(t, "", false))
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "wrong password")
@@ -250,7 +462,7 @@ func TestApplyCmd_LogFailureIsReportedAfterTheRunFinishes(t *testing.T) {
 			change := model.Change{Kind: model.ChangeCreate, Verb: "create", Total: 1}
 			plan := run.PlanResult{Steps: []run.Planned{ft.planned("a", change), ft.planned("b", change)}}
 
-			err := (&ApplyCmd{Yes: true}).applyPlan(plan, ft.terminal(t, "", false))
+			err := (&ApplyCmd{Yes: true}).applyPlan(t.Context(), plan, ft.terminal(t, "", false))
 
 			require.ErrorIs(t, err, tt.want)
 			assert.Contains(t, err.Error(), "broken.log")
@@ -281,7 +493,7 @@ func TestApplyCmd_StreamsOutputAndWritesALog(t *testing.T) {
 	plan, err := run.Plan(context.Background(), run.Compiled{Steps: []run.Step{{Name: "tools", Action: outputAction{}}}})
 	require.NoError(t, err)
 
-	require.NoError(t, (&ApplyCmd{Yes: true}).applyPlan(plan, ft.terminal(t, "", false)))
+	require.NoError(t, (&ApplyCmd{Yes: true}).applyPlan(t.Context(), plan, ft.terminal(t, "", false)))
 
 	out := ft.out.String()
 	assert.Contains(t, out, "→ tools\n  │ downloading jq\n  │ installed jq\n+ tools  changed")

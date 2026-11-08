@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 )
 
 var errChangesPending = errors.New("changes pending")
@@ -25,7 +27,7 @@ func (c *PlanCmd) Run(cli *CLI) error {
 }
 
 func (c *PlanCmd) run(cli *CLI, out io.Writer) error {
-	plan, err := buildPlan(cli, c.Profile)
+	plan, err := buildPlan(context.Background(), cli, c.Profile)
 	if err != nil {
 		return err
 	}
@@ -41,7 +43,17 @@ func (c *PlanCmd) run(cli *CLI, out io.Writer) error {
 	return nil
 }
 
-func buildPlan(cli *CLI, profileFlag string) (run.PlanResult, error) {
+func buildPlan(ctx context.Context, cli *CLI, profileFlag string) (run.PlanResult, error) {
+	ctx, stopSignals := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	plan, err := planSteps(ctx, cli, profileFlag)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return run.PlanResult{}, fmt.Errorf("plan interrupted: %w", ctxErr)
+	}
+	return plan, err
+}
+
+func planSteps(ctx context.Context, cli *CLI, profileFlag string) (run.PlanResult, error) {
 	cfg, err := config.Load(cli.Config)
 	if err != nil {
 		return run.PlanResult{}, fmt.Errorf("load config: %w", err)
@@ -68,7 +80,7 @@ func buildPlan(cli *CLI, profileFlag string) (run.PlanResult, error) {
 		return run.PlanResult{}, fmt.Errorf("compile: %w", err)
 	}
 
-	plan, err := run.Plan(context.Background(), compiled)
+	plan, err := run.Plan(ctx, compiled)
 	if err != nil {
 		return run.PlanResult{}, fmt.Errorf("plan: %w", err)
 	}

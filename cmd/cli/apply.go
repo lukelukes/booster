@@ -53,7 +53,7 @@ func (c *ApplyCmd) Run(cli *CLI) error {
 }
 
 func (c *ApplyCmd) run(ctx context.Context, cli *CLI, term terminal) error {
-	plan, err := buildPlan(cli, c.Profile)
+	plan, err := buildPlan(ctx, cli, c.Profile)
 	if err != nil {
 		return err
 	}

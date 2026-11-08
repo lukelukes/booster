@@ -59,37 +59,31 @@ func runLog(t *testing.T, stdout string) string {
 	return string(content)
 }
 
-func TestApply_Interrupt(t *testing.T) {
+func TestInterrupt(t *testing.T) {
+	planning := func(t *testing.T, cmd *exec.Cmd, stdout, stderr string) {
+		assert.Equal(t, 1, cmd.ProcessState.ExitCode(), stderr)
+		assert.Contains(t, stderr, "plan interrupted")
+		assert.NotContains(t, stdout, "to change")
+	}
 	tests := []struct {
 		name    string
+		args    []string
 		blockOn string
-		check   func(t *testing.T, cmd *exec.Cmd, err error, stdout, stderr string, child int)
+		check   func(t *testing.T, cmd *exec.Cmd, stdout, stderr string)
 	}{
+		{name: "plan, while planning", args: []string{"plan"}, blockOn: "current", check: planning},
+		{name: "apply, while planning", args: []string{"apply", "--yes"}, blockOn: "current", check: planning},
 		{
-			name:    "while planning, the process stops at once",
-			blockOn: "current",
-			check: func(t *testing.T, cmd *exec.Cmd, err error, stdout, _ string, _ int) {
-				require.Error(t, err)
-				status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
-				require.True(t, ok)
-				assert.True(t, status.Signaled(), "exited normally instead of by the signal")
-				assert.Equal(t, syscall.SIGINT, status.Signal())
-				assert.NotContains(t, stdout, "applying")
-			},
-		},
-		{
-			name:    "while applying, the command's children stop and the remaining steps do not run",
+			name:    "apply, while applying the remaining steps do not run",
+			args:    []string{"apply", "--yes"},
 			blockOn: "use",
-			check: func(t *testing.T, cmd *exec.Cmd, _ error, stdout, stderr string, child int) {
+			check: func(t *testing.T, cmd *exec.Cmd, stdout, stderr string) {
 				assert.Equal(t, 1, cmd.ProcessState.ExitCode(), stderr)
 				assert.Contains(t, stderr, "apply interrupted")
 				assert.Contains(t, stdout, "✗ tools  failed")
 				assert.Contains(t, stdout, "- dirs  not run")
 				log := runLog(t, stdout)
 				assert.Contains(t, log, "- dirs  not run")
-				assert.Eventually(t, func() bool {
-					return errors.Is(syscall.Kill(child, 0), syscall.ESRCH)
-				}, 2*time.Second, 10*time.Millisecond, "the child of the interrupted command is still running")
 			},
 		},
 	}
@@ -110,24 +104,28 @@ tasks:
     action: dir.create
     args: [%q]
 `, newDir))
-			cmd, stdout, stderr := boosterCmd(t, "--config", config, "apply", "--yes")
+			cmd, stdout, stderr := boosterCmd(t, append([]string{"--config", config}, tt.args...)...)
 			require.NoError(t, cmd.Start())
 			t.Cleanup(func() { _ = cmd.Process.Kill() })
 
 			waitForFile(t, ready)
-			child := fixturePIDs(t, pids)[1]
+			fixture := fixturePIDs(t, pids)
 			require.NoError(t, cmd.Process.Signal(os.Interrupt))
 			done := make(chan error, 1)
 			go func() { done <- cmd.Wait() }()
-			var err error
 			select {
-			case err = <-done:
+			case <-done:
 			case <-time.After(5 * time.Second):
 				require.FailNow(t, "booster kept running after the interrupt")
 			}
 
-			tt.check(t, cmd, err, stdout.String(), stderr.String(), child)
+			tt.check(t, cmd, stdout.String(), stderr.String())
 			assert.NoDirExists(t, newDir)
+			for _, pid := range fixture {
+				assert.Eventually(t, func() bool {
+					return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
+				}, 2*time.Second, 10*time.Millisecond, "process %d of the interrupted command is still running", pid)
+			}
 		})
 	}
 }

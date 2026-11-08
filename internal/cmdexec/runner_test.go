@@ -107,15 +107,7 @@ func TestRealRunner_CancelStopsTheWholeProcessGroup(t *testing.T) {
 				_, err := DefaultRunner().Run(ctx, "sh", "-c", tt.script)
 				done <- err
 			}()
-			var child int
-			select {
-			case line := <-pids:
-				var err error
-				child, err = strconv.Atoi(line)
-				require.NoError(t, err)
-			case <-time.After(5 * time.Second):
-				t.Fatal("the child never started")
-			}
+			child := readPID(t, pids)
 			t.Cleanup(func() { _ = syscall.Kill(child, syscall.SIGKILL) })
 
 			cancel()
@@ -130,5 +122,79 @@ func TestRealRunner_CancelStopsTheWholeProcessGroup(t *testing.T) {
 				return errors.Is(syscall.Kill(child, 0), syscall.ESRCH)
 			}, 2*time.Second, 10*time.Millisecond, "the child outlived the cancelled command")
 		})
+	}
+}
+
+func TestRealRunner_StopsChildrenLeftBehindByAnExitedParent(t *testing.T) {
+	tests := []struct {
+		name   string
+		cancel bool
+		within time.Duration
+	}{
+		{name: "cancelled after the parent exited", cancel: true, within: time.Second},
+		{name: "never cancelled", within: killGrace + 2*time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pids := make(chan string, 2)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ctx = WithLineSink(ctx, func(line string) { pids <- line })
+			done := make(chan error, 1)
+			go func() {
+				_, err := DefaultRunner().Run(ctx, "sh", "-c", `echo $$; sleep 1000 & echo $!; exit 0`)
+				done <- err
+			}()
+			parent, child := readPID(t, pids), readPID(t, pids)
+			t.Cleanup(func() { _ = syscall.Kill(child, syscall.SIGKILL) })
+			require.Eventually(t, func() bool {
+				return errors.Is(syscall.Kill(parent, 0), syscall.ESRCH)
+			}, 5*time.Second, 10*time.Millisecond, "the parent never exited")
+
+			if tt.cancel {
+				cancel()
+			}
+
+			select {
+			case err := <-done:
+				require.Error(t, err)
+			case <-time.After(tt.within):
+				t.Fatal("Run kept waiting on the child holding its output")
+			}
+			assert.Eventually(t, func() bool {
+				return errors.Is(syscall.Kill(child, 0), syscall.ESRCH)
+			}, 2*time.Second, 10*time.Millisecond, "the child outlived its command")
+		})
+	}
+}
+
+func TestRealRunner_CommandsHaveNoControllingTerminal(t *testing.T) {
+	done := make(chan error, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	go func() {
+		_, err := DefaultRunner().Run(ctx, "sh", "-c", `read -r line </dev/tty`)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("a command reading the terminal blocked instead of failing")
+	}
+}
+
+func readPID(t *testing.T, lines <-chan string) int {
+	t.Helper()
+	select {
+	case line := <-lines:
+		pid, err := strconv.Atoi(line)
+		require.NoError(t, err)
+		return pid
+	case <-time.After(5 * time.Second):
+		t.Fatal("the command never printed its pid")
+		return 0
 	}
 }

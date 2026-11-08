@@ -136,7 +136,6 @@ func TestNewPkgManagerInstall(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.Equal(t, []string{"paru", "homebrew"}, created.(*PkgManagerInstall).Managers)
-		assert.True(t, created.NeedsSudo())
 	})
 
 	t.Run("rejects an unsupported manager", func(t *testing.T) {

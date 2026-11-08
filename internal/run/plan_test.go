@@ -11,14 +11,14 @@ import (
 )
 
 type fakeAction struct {
-	change  model.Change
-	err     error
-	checked int
-	applied int
+	change   model.Change
+	err      error
+	applyErr error
+	checked  int
+	applied  int
 }
 
-func (f *fakeAction) Name() string    { return "fake" }
-func (f *fakeAction) NeedsSudo() bool { return false }
+func (f *fakeAction) Name() string { return "fake" }
 
 func (f *fakeAction) Check(context.Context) (model.Change, error) {
 	f.checked++
@@ -27,7 +27,7 @@ func (f *fakeAction) Check(context.Context) (model.Change, error) {
 
 func (f *fakeAction) Apply(context.Context) error {
 	f.applied++
-	return nil
+	return f.applyErr
 }
 
 func TestPlan_ChecksEveryStepInOrder(t *testing.T) {

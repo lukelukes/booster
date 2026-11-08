@@ -28,6 +28,7 @@ type CLI struct {
 	Config  string     `help:"Path to config file" default:"./bootstrap.yaml" type:"path"`
 	Run     RunCmd     `cmd:"" default:"withargs" help:"Run bootstrap tasks (default)"`
 	Plan    PlanCmd    `cmd:"" help:"Show what would change; exits 2 when changes are pending"`
+	Apply   ApplyCmd   `cmd:"" help:"Show the plan, confirm, then apply it"`
 	Version VersionCmd `cmd:"" help:"Show version information"`
 }
 

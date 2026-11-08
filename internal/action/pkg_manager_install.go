@@ -56,10 +56,6 @@ func (a *PkgManagerInstall) Name() string {
 	return "pkg-manager.install"
 }
 
-func (a *PkgManagerInstall) NeedsSudo() bool {
-	return true
-}
-
 func (a *PkgManagerInstall) Check(ctx context.Context) (model.Change, error) {
 	change := model.Change{Verb: "install", Total: len(a.Managers)}
 

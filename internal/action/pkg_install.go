@@ -94,10 +94,6 @@ func (a *PkgInstall) Name() string {
 	return "pkg.install"
 }
 
-func (a *PkgInstall) NeedsSudo() bool {
-	return a.OS != "darwin"
-}
-
 func (a *PkgInstall) Check(ctx context.Context) (model.Change, error) {
 	change := model.Change{Verb: "install", Total: len(a.Packages) + len(a.Casks)}
 
@@ -120,7 +116,7 @@ func (a *PkgInstall) Check(ctx context.Context) (model.Change, error) {
 	}
 	if len(change.Items) > 0 {
 		change.Kind = model.ChangeCreate
-		change.NeedsSudo = a.NeedsSudo()
+		change.NeedsSudo = a.OS != "darwin"
 	}
 
 	return change, nil

@@ -24,35 +24,9 @@ func (c *PlanCmd) Run(cli *CLI) error {
 }
 
 func (c *PlanCmd) run(cli *CLI, out io.Writer) error {
-	cfg, err := config.Load(cli.Config)
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
-
-	profile, err := validateProfile(cfg.Profiles, c.Profile)
+	plan, err := buildPlan(cli, c.Profile)
 	if err != nil {
 		return err
-	}
-
-	vars, err := resolveVariables(cfg.Variables)
-	if err != nil {
-		return fmt.Errorf("resolve variables: %w", err)
-	}
-
-	varsAny := make(map[string]any, len(vars))
-	for k, v := range vars {
-		varsAny[k] = v
-	}
-	exprCtx := expr.NewContext().WithProfile(profile).WithVars(varsAny)
-
-	compiled, err := run.Compile(cfg.Tasks, exprCtx, action.Registry())
-	if err != nil {
-		return fmt.Errorf("compile: %w", err)
-	}
-
-	plan, err := run.Plan(context.Background(), compiled)
-	if err != nil {
-		return fmt.Errorf("plan: %w", err)
 	}
 
 	view := plan.View()
@@ -64,4 +38,39 @@ func (c *PlanCmd) run(cli *CLI, out io.Writer) error {
 		return errChangesPending
 	}
 	return nil
+}
+
+func buildPlan(cli *CLI, profileFlag string) (run.PlanResult, error) {
+	cfg, err := config.Load(cli.Config)
+	if err != nil {
+		return run.PlanResult{}, fmt.Errorf("load config: %w", err)
+	}
+
+	profile, err := validateProfile(cfg.Profiles, profileFlag)
+	if err != nil {
+		return run.PlanResult{}, err
+	}
+
+	vars, err := resolveVariables(cfg.Variables)
+	if err != nil {
+		return run.PlanResult{}, fmt.Errorf("resolve variables: %w", err)
+	}
+
+	varsAny := make(map[string]any, len(vars))
+	for k, v := range vars {
+		varsAny[k] = v
+	}
+	exprCtx := expr.NewContext().WithProfile(profile).WithVars(varsAny)
+
+	compiled, err := run.Compile(cfg.Tasks, exprCtx, action.Registry())
+	if err != nil {
+		return run.PlanResult{}, fmt.Errorf("compile: %w", err)
+	}
+
+	plan, err := run.Plan(context.Background(), compiled)
+	if err != nil {
+		return run.PlanResult{}, fmt.Errorf("plan: %w", err)
+	}
+
+	return plan, nil
 }

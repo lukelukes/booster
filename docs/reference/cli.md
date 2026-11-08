@@ -64,6 +64,10 @@ Prints version, commit hash, and build date to stdout.
 cli <version> (commit: <commit>, built: <date>)
 ```
 
+## Commands that ask for input
+
+Commands that booster runs can't read from the terminal yet. A command that stops to ask for input, such as a password or a confirmation, waits until you press Ctrl-C.
+
 ## Exit codes
 
 | Code | Meaning |

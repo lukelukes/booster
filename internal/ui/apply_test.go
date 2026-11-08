@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -15,15 +14,12 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/golden"
-	"github.com/charmbracelet/x/exp/teatest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 var (
 	toggleOutput = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")}
-	enter        = tea.KeyMsg{Type: tea.KeyEnter}
-	quit         = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")}
 	ctrlC        = tea.KeyMsg{Type: tea.KeyCtrlC}
 	t0           = time.Date(2026, 11, 8, 14, 2, 0, 0, time.UTC)
 )
@@ -94,21 +90,19 @@ var (
 	}
 )
 
-func applyingSession(p model.Plan, width, height int) (session, *time.Time) {
+func applyingScreen(p model.Plan, width, height int) (*applyScreen, *time.Time) {
 	clock := t0
-	st := newStyles(lipgloss.NewRenderer(io.Discard))
-	m := session{now: func() time.Time { return clock }, cancel: func() {}, apply: newApplyScreen(st, p, "~/.local/state/booster/logs/apply-20261108-140200-1.log")}
-	m.apply.resize(width, height)
-	return m, &clock
+	a := newApplyScreen(lipgloss.NewRenderer(io.Discard), p, "~/.local/state/booster/logs/apply-20261108-140200-1.log", nil, func() {}, func() time.Time { return clock })
+	a.resize(width, height)
+	return a, &clock
 }
 
-func feed(m session, clock *time.Time, steps []at) session {
+func feed(a *applyScreen, clock *time.Time, steps []at) *applyScreen {
 	for _, s := range steps {
 		*clock = t0.Add(time.Duration(s.sec) * time.Second)
-		next, _ := m.Update(s.msg)
-		m = next.(session)
+		a.Update(s.msg)
 	}
-	return m
+	return a
 }
 
 func TestApply_Frames(t *testing.T) {
@@ -131,17 +125,25 @@ func TestApply_Frames(t *testing.T) {
 			ev(3725, done(4, model.StatusChanged, 3524*time.Second)),
 			ev(3725, model.RunDone{Summary: model.Summary{Total: 5, Changed: 4, OK: 1, Duration: 3725 * time.Second}}),
 		})},
+		{name: "stopped between steps counts only the applied changes", steps: seq(started, []at{
+			key(110, ctrlC),
+			ev(150, done(1, model.StatusChanged, 42*time.Second)),
+			ev(150, model.TaskDone{Index: 2, Result: model.Result{Status: model.StatusSkipped, Reason: "not run"}}),
+			ev(150, model.TaskDone{Index: 3, Result: model.Result{Status: model.StatusSkipped, Reason: "not run"}}),
+			ev(150, model.TaskDone{Index: 4, Result: model.Result{Status: model.StatusSkipped, Reason: "not run"}}),
+			ev(150, model.RunDone{Summary: model.Summary{Total: 5, Changed: 2, Skipped: 3, Duration: 150 * time.Second}}),
+		})},
 		{name: "scrolls to keep the running step visible", width: 80, height: 9, steps: seq(started, packagesOutput, afterPackages, output(203, 3, "linking ~/.zshrc"))},
 		{name: "scrolls to keep the failed step visible", width: 80, height: 8, steps: seq(started, packagesOutput, afterPackages, stopped)},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m, clock := applyingSession(applyPlan(), tt.width, tt.height)
+			a, clock := applyingScreen(applyPlan(), tt.width, tt.height)
 
-			m = feed(m, clock, tt.steps)
+			a = feed(a, clock, tt.steps)
 
-			golden.RequireEqual(t, []byte(m.View()))
+			golden.RequireEqual(t, []byte(a.View()))
 		})
 	}
 }
@@ -158,57 +160,15 @@ func TestApply_RowsFitANarrowTerminal(t *testing.T) {
 	}
 
 	for _, steps := range stages {
-		m, clock := applyingSession(p, width, height)
-		m = feed(m, clock, steps)
+		a, clock := applyingScreen(p, width, height)
+		a = feed(a, clock, steps)
 
-		rows := strings.Split(strings.TrimSuffix(m.View(), "\n"), "\n")
+		rows := strings.Split(strings.TrimSuffix(a.View(), "\n"), "\n")
 		assert.LessOrEqual(t, len(rows), height)
 		for _, r := range rows {
 			assert.LessOrEqual(t, ansi.StringWidth(r), width, "row %q", r)
 		}
-		assert.Contains(t, m.View(), "…")
-	}
-}
-
-type recorder struct {
-	mu    sync.Mutex
-	calls []string
-}
-
-func (r *recorder) add(call string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.calls = append(r.calls, call)
-}
-
-func (r *recorder) list() []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]string(nil), r.calls...)
-}
-
-func scriptedRun(rec *recorder) func(context.Context, func(model.Event)) {
-	return func(_ context.Context, emit func(model.Event)) {
-		rec.add("run")
-		emit(model.RunStart{Total: 2})
-		emit(model.TaskStart{Index: 0, Name: "dirs"})
-		emit(model.TaskOutput{Index: 0, Line: "mkdir ~/.config"})
-		emit(done(0, model.StatusChanged, time.Second))
-		emit(model.TaskStart{Index: 1, Name: "links"})
-		emit(done(1, model.StatusChanged, time.Second))
-		emit(model.RunDone{Summary: model.Summary{Total: 2, Changed: 2, Duration: 2 * time.Second}})
-	}
-}
-
-func cancellableRun(rec *recorder) func(context.Context, func(model.Event)) {
-	return func(ctx context.Context, emit func(model.Event)) {
-		emit(model.RunStart{Total: 2})
-		emit(model.TaskStart{Index: 0, Name: "dirs"})
-		<-ctx.Done()
-		rec.add("cancelled")
-		emit(model.TaskDone{Index: 0, Result: model.Result{Status: model.StatusFailed, Err: ctx.Err()}})
-		emit(model.TaskDone{Index: 1, Result: model.Result{Status: model.StatusSkipped, Reason: "not run"}})
-		emit(model.RunDone{Summary: model.Summary{Total: 2, Failed: 1, Skipped: 1}})
+		assert.Contains(t, a.View(), "…")
 	}
 }
 
@@ -219,90 +179,87 @@ func twoSteps() model.Plan {
 	}}
 }
 
-type sessionRun struct {
-	err      error
-	rec      *recorder
-	decision Decision
-	final    session
+type producer struct {
+	ctx    context.Context
+	stop   context.CancelFunc
+	events chan model.Event
+	done   chan struct{}
 }
 
-func runSession(t *testing.T, job func(*recorder) Job, keys ...tea.KeyMsg) sessionRun {
+func produce(t *testing.T, run func(ctx context.Context, emit func(model.Event))) producer {
 	t.Helper()
-
-	rec := &recorder{}
-	start := func(d Decision) (Job, error) {
-		rec.add("start")
-		return job(rec), nil
-	}
-	m := newSession(t.Context(), lipgloss.NewRenderer(io.Discard), header, twoSteps(), ModeApply, start, time.Now)
-	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(100, 30))
-	for _, k := range keys {
-		if k.Type == tea.KeyCtrlC {
-			teatest.WaitFor(t, tm.Output(), func(b []byte) bool { return bytes.Contains(b, []byte("ctrl+c")) })
+	ctx, stop := context.WithCancel(t.Context())
+	p := producer{ctx: ctx, stop: stop, events: make(chan model.Event), done: make(chan struct{})}
+	go func() {
+		defer close(p.done)
+		defer close(p.events)
+		run(ctx, func(e model.Event) { p.events <- e })
+	}()
+	t.Cleanup(func() {
+		stop()
+		for range p.events {
 		}
-		tm.Send(k)
-	}
-	final := tm.FinalModel(t, teatest.WithFinalTimeout(2*time.Second)).(session)
-	return sessionRun{rec: rec, decision: final.review.decision, err: final.err, final: final}
+		<-p.done
+	})
+	return p
 }
 
-func TestSession(t *testing.T) {
-	t.Run("enter switches to the apply screen and runs the job", func(t *testing.T) {
-		r := runSession(t, func(rec *recorder) Job {
-			return Job{Plan: twoSteps(), Log: "~/apply.log", Run: scriptedRun(rec)}
-		}, enter)
+func finishedRun(_ context.Context, emit func(model.Event)) {
+	emit(model.RunStart{Total: 2})
+	emit(model.TaskStart{Index: 0, Name: "dirs"})
+	emit(model.TaskOutput{Index: 0, Line: "mkdir ~/.config"})
+	emit(done(0, model.StatusChanged, time.Second))
+	emit(model.TaskStart{Index: 1, Name: "links"})
+	emit(done(1, model.StatusChanged, time.Second))
+	emit(model.RunDone{Summary: model.Summary{Total: 2, Changed: 2, Duration: 2 * time.Second}})
+}
 
-		require.NoError(t, r.err)
-		assert.Equal(t, Decision{Apply: true}, r.decision)
-		assert.Equal(t, []string{"start", "run"}, r.rec.list())
-		view := r.final.View()
-		assert.Contains(t, view, "applied 2 changes")
-		assert.Contains(t, view, "2 changed · 0 up to date")
-		assert.Contains(t, view, "~/apply.log")
+func cancellableRun(ctx context.Context, emit func(model.Event)) {
+	emit(model.RunStart{Total: 2})
+	emit(model.TaskStart{Index: 0, Name: "dirs"})
+	<-ctx.Done()
+	emit(model.TaskDone{Index: 0, Result: model.Result{Status: model.StatusFailed, Err: ctx.Err()}})
+	emit(model.TaskDone{Index: 1, Result: model.Result{Status: model.StatusSkipped, Reason: "not run"}})
+	emit(model.RunDone{Summary: model.Summary{Total: 2, Failed: 1, Skipped: 1}})
+}
+
+type failingInput struct{ err error }
+
+func (r failingInput) Read([]byte) (int, error) { return 0, r.err }
+
+func TestApply(t *testing.T) {
+	t.Run("renders events until the producer closes the channel", func(t *testing.T) {
+		p := produce(t, finishedRun)
+		var out bytes.Buffer
+
+		err := Apply(strings.NewReader(""), &out, twoSteps(), "~/apply.log", p.events, p.stop)
+
+		require.NoError(t, err)
+		assert.Contains(t, out.String(), "applied 2 changes")
+		assert.Contains(t, out.String(), "2 changed · 0 up to date")
+		assert.Contains(t, out.String(), "~/apply.log")
+		assert.Error(t, p.ctx.Err(), "the run's context is released on exit")
 	})
 
-	t.Run("sudo runs before the job", func(t *testing.T) {
-		r := runSession(t, func(rec *recorder) Job {
-			return Job{Plan: twoSteps(), Run: scriptedRun(rec), Sudo: func() error {
-				rec.add("sudo")
-				return nil
-			}}
-		}, enter)
+	t.Run("ctrl+c stops the run and waits for its last event", func(t *testing.T) {
+		p := produce(t, cancellableRun)
+		var out bytes.Buffer
 
-		require.NoError(t, r.err)
-		assert.Equal(t, []string{"start", "sudo", "run"}, r.rec.list())
+		err := Apply(strings.NewReader("\x03"), &out, twoSteps(), "~/apply.log", p.events, p.stop)
+
+		require.NoError(t, err)
+		<-p.done
+		assert.Contains(t, out.String(), "stopped at dirs")
+		assert.Contains(t, out.String(), "1 not run")
 	})
 
-	t.Run("refused sudo runs nothing", func(t *testing.T) {
-		refused := errors.New("wrong password")
-		r := runSession(t, func(rec *recorder) Job {
-			return Job{Plan: twoSteps(), Run: scriptedRun(rec), Sudo: func() error { return refused }}
-		}, enter)
+	t.Run("an input error ends the program and stops the run", func(t *testing.T) {
+		broken := errors.New("tty gone")
+		p := produce(t, cancellableRun)
 
-		require.ErrorIs(t, r.err, refused)
-		assert.Equal(t, []string{"start"}, r.rec.list())
-	})
+		err := Apply(failingInput{broken}, io.Discard, twoSteps(), "~/apply.log", p.events, p.stop)
 
-	t.Run("ctrl+c cancels the running step and waits for the run to end", func(t *testing.T) {
-		r := runSession(t, func(rec *recorder) Job {
-			return Job{Plan: twoSteps(), Run: cancellableRun(rec)}
-		}, enter, ctrlC)
-
-		require.NoError(t, r.err)
-		assert.Equal(t, []string{"start", "cancelled"}, r.rec.list())
-		view := r.final.View()
-		assert.Contains(t, view, "stopped at dirs")
-		assert.Contains(t, view, "1 not run")
-		assert.NotContains(t, view, "●")
-	})
-
-	t.Run("quitting the review starts nothing", func(t *testing.T) {
-		r := runSession(t, func(rec *recorder) Job {
-			return Job{Plan: twoSteps(), Run: scriptedRun(rec)}
-		}, quit)
-
-		assert.Equal(t, Decision{}, r.decision)
-		assert.Empty(t, r.rec.list())
-		assert.NotContains(t, r.final.View(), "applying")
+		require.ErrorIs(t, err, broken)
+		assert.Error(t, p.ctx.Err())
 	})
 }

@@ -3,6 +3,7 @@ package ui
 import (
 	"booster/internal/model"
 	"fmt"
+	"io"
 	"math"
 	"strings"
 
@@ -38,6 +39,15 @@ const (
 	cursorMarker  = " ▸ "
 	noCursorSpace = "   "
 )
+
+func Review(in io.Reader, out io.Writer, h Header, p model.Plan, mode Mode) (Decision, error) {
+	m := newReview(lipgloss.NewRenderer(out), h, p, mode)
+	final, err := tea.NewProgram(m, tea.WithInput(in), tea.WithOutput(out)).Run()
+	if err != nil {
+		return Decision{}, err
+	}
+	return final.(review).decision, nil
+}
 
 type review struct {
 	header   Header
@@ -76,7 +86,7 @@ func (m review) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "enter":
 			m.decision = m.decide()
-			return m, func() tea.Msg { return decided{} }
+			return m, tea.Quit
 		case "up", "k":
 			if _, first, _ := m.body(); first < m.offset {
 				m.offset--

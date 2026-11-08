@@ -2,48 +2,34 @@ package main
 
 import (
 	"booster/internal/model"
-	"booster/internal/run"
 	"booster/internal/ui"
-	"context"
+	"bytes"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 type fakeReview struct {
-	job      ui.Job
-	screen   strings.Builder
 	decision ui.Decision
 	modes    []ui.Mode
 	steps    []string
-	started  bool
 }
 
-func (r *fakeReview) review(ctx context.Context, p model.Plan, mode ui.Mode, start ui.Start) (ui.Decision, error) {
+func (r *fakeReview) review(p model.Plan, mode ui.Mode) (ui.Decision, error) {
 	r.modes = append(r.modes, mode)
 	for _, s := range p.Steps {
 		r.steps = append(r.steps, s.Name)
 	}
-	if !r.decision.Apply {
-		return r.decision, nil
-	}
-
-	job, err := start(r.decision)
-	if err != nil {
-		return r.decision, err
-	}
-	r.job, r.started = job, true
-	if job.Sudo != nil {
-		if err := job.Sudo(); err != nil {
-			return r.decision, err
-		}
-	}
-	job.Run(ctx, ui.Progress(&r.screen, job.Plan))
 	return r.decision, nil
 }
 
@@ -79,9 +65,9 @@ func TestApplyCmd_Review(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, []ui.Mode{ui.ModeApply}, r.modes)
 			assert.Equal(t, []string{"dirs", "links"}, r.steps)
-			assert.Contains(t, ft.out.String()+r.screen.String(), tt.wantOut)
+			assert.Contains(t, ft.out.String(), tt.wantOut)
 			if tt.notWantOut != "" {
-				assert.NotContains(t, r.screen.String(), tt.notWantOut)
+				assert.NotContains(t, ft.out.String(), tt.notWantOut)
 			}
 			assert.Equal(t, tt.wantDir, dirExists(f.newDir))
 			_, linkErr := os.Lstat(f.link)
@@ -123,108 +109,225 @@ func TestPlanCmd_Review(t *testing.T) {
 		require.NoError(t, err)
 		assert.DirExists(t, f.newDir)
 		assert.NoFileExists(t, f.link)
-		assert.Contains(t, r.screen.String(), "1 changed · 0 up to date")
+		assert.Contains(t, ft.out.String(), "1 changed · 0 up to date")
 	})
 }
 
-func TestApplyCmd_ReviewTeesEventsToTheLog(t *testing.T) {
-	f := newApplyFixture(t)
-	var ft fakeTerminal
-	r := &fakeReview{decision: ui.Decision{Apply: true}}
-
-	require.NoError(t, (&ApplyCmd{}).run(t.Context(), f.cli, ft.withReview(t, r)))
-
-	logs, err := filepath.Glob(filepath.Join(ft.logDir, "*.log"))
-	require.NoError(t, err)
-	require.Len(t, logs, 1)
-	content, err := os.ReadFile(logs[0])
-	require.NoError(t, err)
-	assert.Contains(t, string(content), "2 to change")
-	assert.True(t, strings.HasSuffix(string(content), r.screen.String()), "log ends with the events the screen got")
-	assert.Equal(t, logs[0], r.job.Log)
-	assert.NotContains(t, ft.out.String(), "log:")
+type screenFixture struct {
+	cli     *CLI
+	dir     string
+	runs    string
+	started string
+	pid     string
+	newDir  string
 }
 
-func TestApplyCmd_ReviewAsksForSudoThroughTheScreen(t *testing.T) {
+func newScreenFixture(t *testing.T, middle string) screenFixture {
+	t.Helper()
+	dir := t.TempDir()
+	f := screenFixture{
+		dir:     dir,
+		runs:    filepath.Join(dir, "runs"),
+		started: filepath.Join(dir, "started"),
+		pid:     filepath.Join(dir, "pid"),
+		newDir:  filepath.Join(dir, "home", ".config"),
+	}
+	middle = strings.NewReplacer("STARTED", strconv.Quote(f.started), "PID", strconv.Quote(f.pid)).Replace(middle)
+	configPath := filepath.Join(dir, "bootstrap.yaml")
+	require.NoError(t, os.WriteFile(configPath, fmt.Appendf(nil, `version: "1"
+tasks:
+  - name: count
+    action: cmd
+    args: { check: [test, -f, %q], run: [sh, -c, 'echo run >> "$1"', sh, %q] }
+%s
+  - name: dirs
+    action: dir.create
+    args: [%q]
+`, filepath.Join(dir, "never"), f.runs, middle, f.newDir), 0o644))
+	f.cli = &CLI{Config: configPath}
+	t.Cleanup(f.killSlowStep)
+	return f
+}
+
+func (f screenFixture) slowStepPID(t *testing.T) int {
+	t.Helper()
+	raw, err := os.ReadFile(f.pid)
+	require.NoError(t, err)
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	require.NoError(t, err)
+	return pid
+}
+
+func (f screenFixture) killSlowStep() {
+	raw, err := os.ReadFile(f.pid)
+	if err != nil {
+		return
+	}
+	if pid, err := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil {
+		syscall.Kill(pid, syscall.SIGKILL)
+	}
+}
+
+func (f screenFixture) applyCount(t *testing.T) int {
+	t.Helper()
+	raw, err := os.ReadFile(f.runs)
+	if os.IsNotExist(err) {
+		return 0
+	}
+	require.NoError(t, err)
+	return strings.Count(string(raw), "run\n")
+}
+
+type keyWhenExists struct {
+	path string
+	key  string
+	err  error
+	sent bool
+}
+
+func (r *keyWhenExists) Read(p []byte) (int, error) {
+	if r.sent || r.path == "" {
+		return 0, io.EOF
+	}
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Stat(r.path); err == nil {
+			r.sent = true
+			if r.err != nil {
+				return 0, r.err
+			}
+			return copy(p, r.key), nil
+		}
+	}
+	return 0, io.EOF
+}
+
+const slowStep = `  - name: slow
+    action: cmd
+    args: { check: [false], run: [sh, -c, 'echo $$ > "$1"; touch "$2"; exec sleep 30', sh, PID, STARTED] }`
+
+var errTTYGone = errors.New("tty gone")
+
+const (
+	showCursor = "\x1b[?25h"
+	hideCursor = "\x1b[?25l"
+)
+
+func TestApplyCmd_ThroughTheScreens(t *testing.T) {
 	tests := []struct {
-		name      string
-		sudoErr   error
-		wantErr   string
-		wantLogs  int
-		wantOrder []string
+		name       string
+		middle     string
+		reviewKeys string
+		applyInput func(screenFixture) io.Reader
+		wantErr    string
+		wantRuns   int
+		wantDir    bool
+		wantLogs   int
+		wantScreen []string
+		wantLog    string
+		wantOut    string
 	}{
-		{name: "granted", wantLogs: 1, wantOrder: []string{"sudo", "apply a"}},
-		{name: "refused", sudoErr: errors.New("wrong password"), wantErr: "sudo required: wrong password", wantOrder: []string{"sudo"}},
+		{
+			name:       "enter applies once and logs once",
+			reviewKeys: "\r",
+			wantRuns:   1,
+			wantDir:    true,
+			wantLogs:   1,
+			wantScreen: []string{"applied 2 changes", "2 changed · 0 up to date"},
+			wantLog:    "2 changed · 0 up to date",
+		},
+		{
+			name:       "a skipped step is left alone",
+			reviewKeys: " \r",
+			wantDir:    true,
+			wantLogs:   1,
+			wantScreen: []string{"applied 1 change", "1 changed · 0 up to date"},
+			wantLog:    "1 changed · 0 up to date",
+		},
+		{
+			name:       "a failed step stops the run and fails the command",
+			middle:     "  - name: broken\n    action: cmd\n    args: { check: [false], run: [false] }",
+			reviewKeys: "\r",
+			wantErr:    "apply: 1 of 3 steps failed",
+			wantRuns:   1,
+			wantLogs:   1,
+			wantScreen: []string{"stopped at broken", "1 changed · 0 up to date · 1 failed · 1 not run"},
+			wantLog:    "1 changed · 0 up to date · 1 failed · 1 not run",
+		},
+		{
+			name:       "ctrl+c stops the running step and nothing after it runs",
+			middle:     slowStep,
+			reviewKeys: "\r",
+			applyInput: func(f screenFixture) io.Reader { return &keyWhenExists{path: f.started, key: "\x03"} },
+			wantErr:    "apply interrupted: context canceled",
+			wantRuns:   1,
+			wantLogs:   1,
+			wantScreen: []string{"stopped at slow", "1 changed · 0 up to date · 1 failed · 1 not run"},
+			wantLog:    "1 changed · 0 up to date · 1 failed · 1 not run",
+		},
+		{
+			name:       "a broken terminal stops the run before the log is closed",
+			middle:     slowStep,
+			reviewKeys: "\r",
+			applyInput: func(f screenFixture) io.Reader { return &keyWhenExists{path: f.started, err: errTTYGone} },
+			wantErr:    "program was killed: error reading input: tty gone\napply interrupted: context canceled",
+			wantRuns:   1,
+			wantLogs:   1,
+			wantLog:    "1 changed · 0 up to date · 1 failed · 1 not run",
+		},
+		{
+			name:       "quitting the review applies nothing and leaves no log",
+			reviewKeys: "q",
+			wantOut:    "cancelled, nothing changed",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			f := newScreenFixture(t, tt.middle)
 			var ft fakeTerminal
-			plan := run.PlanResult{Steps: []run.Planned{
-				ft.planned("a", model.Change{Kind: model.ChangeCreate, NeedsSudo: true}),
-			}}
-			r := &fakeReview{decision: ui.Decision{Apply: true}}
-			term := ft.withReview(t, r)
-			term.sudo = func() error {
-				ft.events = append(ft.events, "sudo")
-				return tt.sudoErr
+			var screen bytes.Buffer
+			applyIn := io.Reader(&keyWhenExists{})
+			if tt.applyInput != nil {
+				applyIn = tt.applyInput(f)
 			}
+			term := withTUI(ft.terminal(t, "", true), strings.NewReader(tt.reviewKeys), applyIn, &screen, ui.Header{})
 
-			err := (&ApplyCmd{}).applyPlan(t.Context(), plan, term)
+			done := make(chan error, 1)
+			go func() { done <- (&ApplyCmd{}).run(t.Context(), f.cli, term) }()
+			var err error
+			select {
+			case err = <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("apply did not return")
+			}
 
 			if tt.wantErr != "" {
 				require.EqualError(t, err, tt.wantErr)
 			} else {
 				require.NoError(t, err)
 			}
-			assert.Equal(t, tt.wantOrder, ft.events)
+			assert.Equal(t, tt.wantRuns, f.applyCount(t))
+			assert.Equal(t, tt.wantDir, dirExists(f.newDir))
+			for _, want := range tt.wantScreen {
+				assert.Contains(t, screen.String(), want)
+			}
+			assert.Greater(t, strings.LastIndex(screen.String(), showCursor), strings.LastIndex(screen.String(), hideCursor), "the terminal is restored")
+			assert.Contains(t, ft.out.String(), tt.wantOut)
+
 			logs, err := filepath.Glob(filepath.Join(ft.logDir, "*.log"))
 			require.NoError(t, err)
-			assert.Len(t, logs, tt.wantLogs)
+			require.Len(t, logs, tt.wantLogs)
+			if tt.wantLogs > 0 {
+				content, err := os.ReadFile(logs[0])
+				require.NoError(t, err)
+				assert.Contains(t, string(content), "to change")
+				assert.True(t, strings.HasSuffix(string(content), tt.wantLog+"\n"), "the log is closed after the run's last event")
+			}
+			if _, err := os.Stat(f.pid); err == nil {
+				assert.ErrorIs(t, syscall.Kill(f.slowStepPID(t), 0), syscall.ESRCH, "the slow step's process is gone")
+			}
 		})
 	}
-}
-
-func TestApplyCmd_ReviewReportsLogFailureAfterTheRunFinishes(t *testing.T) {
-	diskFull := errors.New("no space left on device")
-	tests := []struct {
-		name string
-		log  brokenLog
-	}{
-		{name: "write fails mid-run", log: brokenLog{writeErr: diskFull}},
-		{name: "close fails", log: brokenLog{closeErr: diskFull}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ft := fakeTerminal{log: &tt.log}
-			change := model.Change{Kind: model.ChangeCreate, Verb: "create", Total: 1}
-			plan := run.PlanResult{Steps: []run.Planned{ft.planned("a", change), ft.planned("b", change)}}
-			r := &fakeReview{decision: ui.Decision{Apply: true}}
-
-			err := (&ApplyCmd{}).applyPlan(t.Context(), plan, ft.withReview(t, r))
-
-			require.ErrorIs(t, err, diskFull)
-			assert.Contains(t, err.Error(), "broken.log")
-			assert.Equal(t, []string{"apply a", "apply b"}, ft.events)
-			assert.Contains(t, r.screen.String(), "2 changed · 0 up to date")
-			assert.Contains(t, tt.log.written.String(), "2 to change")
-			assert.NotContains(t, ft.out.String(), "cancelled")
-		})
-	}
-}
-
-func TestApplyCmd_ReviewFailedStepExits1(t *testing.T) {
-	var ft fakeTerminal
-	plan := run.PlanResult{Steps: []run.Planned{
-		{PlannedStep: model.PlannedStep{Name: "a", Change: model.Change{Kind: model.ChangeCreate}}, Action: failingAction{}},
-	}}
-	r := &fakeReview{decision: ui.Decision{Apply: true}}
-
-	err := (&ApplyCmd{}).applyPlan(t.Context(), plan, ft.withReview(t, r))
-
-	require.EqualError(t, err, "apply: 1 of 1 steps failed")
-	assert.NotContains(t, ft.out.String(), "cancelled")
 }
 
 func dirExists(path string) bool {
@@ -253,13 +356,3 @@ func TestUseTUI(t *testing.T) {
 		})
 	}
 }
-
-type failingAction struct{}
-
-func (failingAction) Name() string { return "failing" }
-
-func (failingAction) Check(context.Context) (model.Change, error) {
-	return model.Change{}, nil
-}
-
-func (failingAction) Apply(context.Context) error { return errors.New("boom") }

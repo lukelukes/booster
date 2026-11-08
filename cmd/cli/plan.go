@@ -39,11 +39,14 @@ func (c *PlanCmd) run(ctx context.Context, cli *CLI, term terminal) error {
 	if !view.HasChanges() {
 		review = showPlan(term.out, false)
 	}
-	applied, err := reviewAndApply(ctx, plan, term, review, ui.ModeDrift)
+	decision, err := review(view, ui.ModeDrift)
 	if err != nil {
 		return err
 	}
-	if !applied && view.HasChanges() {
+	if decision.Apply {
+		return execute(ctx, plan.Without(decision.Skip), term)
+	}
+	if view.HasChanges() {
 		return errChangesPending
 	}
 	return nil

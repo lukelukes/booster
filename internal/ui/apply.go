@@ -3,9 +3,11 @@ package ui
 import (
 	"booster/internal/model"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -17,10 +19,26 @@ const (
 	percentLabelSize = 6
 )
 
+func Apply(in io.Reader, out io.Writer, p model.Plan, log string, events <-chan model.Event, stop func()) error {
+	defer stop()
+	m := newApplyScreen(lipgloss.NewRenderer(out), p, log, events, stop, time.Now)
+	_, err := tea.NewProgram(m, tea.WithInput(in), tea.WithOutput(out), tea.WithoutSignalHandler()).Run()
+	return err
+}
+
+type (
+	eventMsg struct{ event model.Event }
+	runEnded struct{}
+	tickMsg  struct{}
+)
+
 type applyScreen struct {
 	started  []time.Time
 	runStart time.Time
 	clock    time.Time
+	now      func() time.Time
+	stop     func()
+	events   <-chan model.Event
 	results  []*model.Result
 	summary  *model.Summary
 	log      string
@@ -35,15 +53,66 @@ type applyScreen struct {
 	stopping bool
 }
 
-func newApplyScreen(st styles, p model.Plan, log string) *applyScreen {
+func newApplyScreen(r *lipgloss.Renderer, p model.Plan, log string, events <-chan model.Event, stop func(), now func() time.Time) *applyScreen {
 	return &applyScreen{
 		plan:    p,
 		log:     log,
-		st:      st,
+		events:  events,
+		stop:    stop,
+		now:     now,
+		clock:   now(),
+		st:      newStyles(r),
 		running: -1,
 		started: make([]time.Time, len(p.Steps)),
 		results: make([]*model.Result, len(p.Steps)),
 	}
+}
+
+func (a *applyScreen) Init() tea.Cmd {
+	return tea.Batch(wait(a.events), tick())
+}
+
+func (a *applyScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		a.resize(msg.Width, msg.Height)
+	case eventMsg:
+		a.event(msg.event, a.now())
+		return a, wait(a.events)
+	case runEnded:
+		return a, tea.Quit
+	case tickMsg:
+		if !a.finished() {
+			a.clock = a.now()
+			return a, tick()
+		}
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "o":
+			a.hideTail = !a.hideTail
+			a.offset = a.scroll()
+		case "ctrl+c":
+			if !a.finished() {
+				a.stopping = true
+				a.stop()
+			}
+		}
+	}
+	return a, nil
+}
+
+func wait(events <-chan model.Event) tea.Cmd {
+	return func() tea.Msg {
+		e, ok := <-events
+		if !ok {
+			return runEnded{}
+		}
+		return eventMsg{e}
+	}
+}
+
+func tick() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg { return tickMsg{} })
 }
 
 func (a *applyScreen) event(e model.Event, now time.Time) {
@@ -151,11 +220,13 @@ func (a *applyScreen) headerLine() string {
 	left := []seg{{" booster", st.accentBold}, {"  ", st.text}}
 	right := []seg{{formatDuration(a.elapsed()), st.secondary}}
 
-	switch {
-	case a.finished() && a.summary.Failed > 0:
+	switch s := a.summary; {
+	case s != nil && s.Failed > 0:
 		left = append(left, seg{"stopped at ", st.text}, seg{a.failedName(), st.fault})
-	case a.finished():
-		left = append(left, seg{"applied " + plural(total, "change"), st.text})
+	case s != nil && s.Skipped > 0:
+		left = append(left, seg{fmt.Sprintf("stopped after %d of %s", s.Changed, plural(total, "change")), st.text})
+	case s != nil:
+		left = append(left, seg{"applied " + plural(s.Changed, "change"), st.text})
 	default:
 		current := finished
 		if a.running >= 0 && a.plan.Steps[a.running].Change.Kind != model.ChangeNone {

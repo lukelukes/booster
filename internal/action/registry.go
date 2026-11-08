@@ -22,6 +22,7 @@ func NewRegistry(runner cmdexec.Runner) map[string]Factory {
 		"pkg-manager.install": host.pkgManagerInstall,
 		"pkg.install":         host.pkgInstall,
 		"mise.use":            host.miseUse,
+		"git.config":          NewGitConfig,
 	}
 }
 

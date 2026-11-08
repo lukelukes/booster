@@ -2,7 +2,6 @@ package tui
 
 import (
 	"booster/internal/variable"
-	"context"
 	"fmt"
 	"io"
 
@@ -70,44 +69,4 @@ func (p *PromptCollector) Collect(defs []variable.Definition) (map[string]string
 	}
 
 	return result, nil
-}
-
-type HuhPrompter struct {
-	input      io.Reader
-	accessible bool
-}
-
-func NewHuhPrompter() *HuhPrompter {
-	return &HuhPrompter{}
-}
-
-func (p *HuhPrompter) WithInput(r io.Reader) *HuhPrompter {
-	p.input = r
-	p.accessible = true
-	return p
-}
-
-func (p *HuhPrompter) Prompt(ctx context.Context, promptText string) (string, error) {
-	var value string
-
-	input := huh.NewInput().
-		Title(promptText).
-		Value(&value)
-
-	form := huh.NewForm(
-		huh.NewGroup(input),
-	).WithTheme(huh.ThemeCatppuccin())
-
-	if p.input != nil {
-		form = form.WithInput(p.input)
-	}
-	if p.accessible {
-		form = form.WithAccessible(true)
-	}
-
-	if err := form.Run(); err != nil {
-		return "", fmt.Errorf("prompt cancelled: %w", err)
-	}
-
-	return value, nil
 }

@@ -155,29 +155,35 @@ Pattern: `^[a-zA-Z0-9_-]+@[a-zA-Z0-9._-]+$`
 
 ## `git.config`
 
-Sets global git configuration values. Skips keys that already have the desired value.
+Sets global git configuration values. Only keys whose current value differs are written; the plan lists each one as `key  old → new`.
 
 **Args:** array of objects
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `key` | string | yes | Git config key |
-| `value` | string | no | Value to set |
-| `prompt` | string | no | Prompt text shown to the user at runtime |
+| `value` | string | yes | Value to set. Supports expressions. |
 
-Provide `value` for a static value. Provide `prompt` to ask the user interactively. When `prompt` is used and the key already has a value, the prompt is skipped.
+The action never prompts during a run. For values that differ per person or machine, define a [variable](config.md) with a `prompt` and reference it in `value`. Booster asks for variables before the run starts and remembers the answers.
 
 **Example:**
 
 ```yaml
-- action: git.config
-  args:
-    - key: user.name
-      prompt: "Enter your full name"
-    - key: user.email
-      prompt: "Enter your email"
-    - key: init.defaultBranch
-      value: main
+variables:
+  git_name:
+    prompt: "Your full name"
+  git_email:
+    prompt: "Git email"
+
+tasks:
+  - action: git.config
+    args:
+      - key: user.name
+        value: ${ vars.git_name }
+      - key: user.email
+        value: ${ vars.git_email }
+      - key: init.defaultBranch
+        value: main
 ```
 
 ---

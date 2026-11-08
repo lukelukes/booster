@@ -25,8 +25,10 @@ func pathErrorf(path, format string, args ...any) error {
 	return &PathError{Path: path, Err: fmt.Errorf(format, args...)}
 }
 
+const maxAliasExpansions = 10000
+
 func ResolveMatches(node yaml.Node, ctx *Context) (yaml.Node, error) {
-	m := matcher{ctx: ctx, active: map[*yaml.Node]bool{}}
+	m := &matcher{ctx: ctx, active: map[*yaml.Node]bool{}}
 	resolved, err := m.resolve(&node, "")
 	if err != nil {
 		return yaml.Node{}, err
@@ -35,16 +37,25 @@ func ResolveMatches(node yaml.Node, ctx *Context) (yaml.Node, error) {
 }
 
 type matcher struct {
-	ctx    *Context
-	active map[*yaml.Node]bool
+	ctx        *Context
+	active     map[*yaml.Node]bool
+	aliasDepth int
+	expansions int
 }
 
 func isContainer(node *yaml.Node) bool {
 	return node.Kind == yaml.MappingNode || node.Kind == yaml.SequenceNode || node.Kind == yaml.DocumentNode
 }
 
-func (m matcher) enter(node *yaml.Node, path string) (*yaml.Node, func(), error) {
+func (m *matcher) enter(node *yaml.Node, path string) (*yaml.Node, func(), error) {
+	aliased := node.Kind == yaml.AliasNode
 	node = deref(node)
+	if aliased || m.aliasDepth > 0 {
+		m.expansions++
+		if m.expansions > maxAliasExpansions {
+			return nil, nil, pathErrorf(path, "too many alias expansions")
+		}
+	}
 	if !isContainer(node) {
 		return node, func() {}, nil
 	}
@@ -52,10 +63,18 @@ func (m matcher) enter(node *yaml.Node, path string) (*yaml.Node, func(), error)
 		return nil, nil, pathErrorf(path, "alias refers to itself")
 	}
 	m.active[node] = true
-	return node, func() { delete(m.active, node) }, nil
+	if aliased {
+		m.aliasDepth++
+	}
+	return node, func() {
+		delete(m.active, node)
+		if aliased {
+			m.aliasDepth--
+		}
+	}, nil
 }
 
-func (m matcher) resolve(node *yaml.Node, path string) (*yaml.Node, error) {
+func (m *matcher) resolve(node *yaml.Node, path string) (*yaml.Node, error) {
 	node, leave, err := m.enter(node, path)
 	if err != nil {
 		return nil, err
@@ -104,7 +123,7 @@ func deref(node *yaml.Node) *yaml.Node {
 	return node
 }
 
-func (m matcher) resolveMatch(block *yaml.Node, path string) (*yaml.Node, error) {
+func (m *matcher) resolveMatch(block *yaml.Node, path string) (*yaml.Node, error) {
 	block, leave, err := m.enter(block, path)
 	if err != nil {
 		return nil, err

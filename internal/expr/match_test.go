@@ -416,6 +416,39 @@ match: &body
 	}
 }
 
+const expandingAliases = `
+- &a [x, x, x, x, x, x, x, x, x, x]
+- &b [*a, *a, *a, *a, *a, *a, *a, *a, *a, *a]
+- &c [*b, *b, *b, *b, *b, *b, *b, *b, *b, *b]
+- &d [*c, *c, *c, *c, *c, *c, *c, *c, *c, *c]
+- &e [*d, *d, *d, *d, *d, *d, *d, *d, *d, *d]
+`
+
+func TestResolveMatchesBoundsAliasExpansion(t *testing.T) {
+	t.Run("a shared graph within the budget resolves", func(t *testing.T) {
+		got, err := ResolveMatches(yamlNode(t, `
+- &a [x, x, x, x, x, x, x, x, x, x]
+- &b [*a, *a, *a, *a, *a, *a, *a, *a, *a, *a]
+- &c [*b, *b, *b, *b, *b, *b, *b, *b, *b, *b]
+`), &Context{OS: "darwin"})
+
+		require.NoError(t, err)
+		require.Len(t, got.Content, 3)
+		assert.Len(t, got.Content[2].Content, 10)
+		assert.Len(t, got.Content[2].Content[9].Content, 10)
+		assert.Equal(t, "x", got.Content[2].Content[9].Content[9].Content[9].Value)
+	})
+
+	t.Run("a compact graph that expands past the budget is rejected", func(t *testing.T) {
+		_, err := ResolveMatches(yamlNode(t, expandingAliases), &Context{OS: "darwin"})
+
+		pathErr, ok := errors.AsType[*PathError](err)
+		require.True(t, ok, "want a *PathError, got %v", err)
+		assert.Equal(t, "[3][7][9][0][1]", pathErr.Path)
+		assert.EqualError(t, pathErr.Err, "too many alias expansions")
+	})
+}
+
 func TestResolveMatchesEvaluatesOnOnce(t *testing.T) {
 	calls := 0
 	ctx := &Context{Vars: map[string]any{"pick": func() string {

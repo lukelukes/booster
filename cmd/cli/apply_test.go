@@ -77,6 +77,11 @@ func (l *brokenLog) Write(p []byte) (int, error) {
 
 func (l *brokenLog) Close() error { return l.closeErr }
 
+func (ft *fakeTerminal) keepSudo(context.Context) func() {
+	ft.events = append(ft.events, "keepalive start")
+	return func() { ft.events = append(ft.events, "keepalive stop") }
+}
+
 func (ft *fakeTerminal) terminal(t *testing.T, input string, interactive bool) terminal {
 	t.Helper()
 	if ft.logDir == "" {
@@ -97,6 +102,7 @@ func (ft *fakeTerminal) terminal(t *testing.T, input string, interactive bool) t
 			ft.events = append(ft.events, "sudo")
 			return ft.sudoErr
 		},
+		keepSudo: ft.keepSudo,
 	}
 }
 
@@ -164,7 +170,7 @@ func TestApplyCmd(t *testing.T) {
 			f := newApplyFixture(t)
 			var ft fakeTerminal
 
-			err := (&ApplyCmd{Yes: tt.yes}).run(f.cli, ft.terminal(t, tt.input, tt.interactive))
+			err := (&ApplyCmd{Yes: tt.yes}).run(t.Context(), f.cli, ft.terminal(t, tt.input, tt.interactive))
 
 			if tt.wantErr != nil {
 				require.ErrorIs(t, err, tt.wantErr)
@@ -199,7 +205,7 @@ func TestApplyCmd_FailedStepStopsTheRun(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(home, 0o755) })
 	var ft fakeTerminal
 
-	err := (&ApplyCmd{Yes: true}).run(f.cli, ft.terminal(t, "", false))
+	err := (&ApplyCmd{Yes: true}).run(t.Context(), f.cli, ft.terminal(t, "", false))
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "1 of 2 steps failed")
@@ -214,10 +220,10 @@ func TestApplyCmd_AsksForSudoOnceBeforeApplying(t *testing.T) {
 	needsSudo := model.Change{Kind: model.ChangeCreate, Verb: "install", NeedsSudo: true}
 	plan := run.PlanResult{Steps: []run.Planned{ft.planned("a", needsSudo), ft.planned("b", needsSudo)}}
 
-	err := (&ApplyCmd{Yes: true}).applyPlan(plan, ft.terminal(t, "", false))
+	err := (&ApplyCmd{Yes: true}).applyPlan(t.Context(), plan, ft.terminal(t, "", false))
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"sudo", "apply a", "apply b"}, ft.events)
+	assert.Equal(t, []string{"sudo", "keepalive start", "apply a", "apply b", "keepalive stop"}, ft.events)
 }
 
 func TestApplyCmd_SudoRefusedAppliesNothing(t *testing.T) {
@@ -226,7 +232,7 @@ func TestApplyCmd_SudoRefusedAppliesNothing(t *testing.T) {
 		ft.planned("a", model.Change{Kind: model.ChangeCreate, NeedsSudo: true}),
 	}}
 
-	err := (&ApplyCmd{Yes: true}).applyPlan(plan, ft.terminal(t, "", false))
+	err := (&ApplyCmd{Yes: true}).applyPlan(t.Context(), plan, ft.terminal(t, "", false))
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "wrong password")
@@ -250,7 +256,7 @@ func TestApplyCmd_LogFailureIsReportedAfterTheRunFinishes(t *testing.T) {
 			change := model.Change{Kind: model.ChangeCreate, Verb: "create", Total: 1}
 			plan := run.PlanResult{Steps: []run.Planned{ft.planned("a", change), ft.planned("b", change)}}
 
-			err := (&ApplyCmd{Yes: true}).applyPlan(plan, ft.terminal(t, "", false))
+			err := (&ApplyCmd{Yes: true}).applyPlan(t.Context(), plan, ft.terminal(t, "", false))
 
 			require.ErrorIs(t, err, tt.want)
 			assert.Contains(t, err.Error(), "broken.log")
@@ -281,7 +287,7 @@ func TestApplyCmd_StreamsOutputAndWritesALog(t *testing.T) {
 	plan, err := run.Plan(context.Background(), run.Compiled{Steps: []run.Step{{Name: "tools", Action: outputAction{}}}})
 	require.NoError(t, err)
 
-	require.NoError(t, (&ApplyCmd{Yes: true}).applyPlan(plan, ft.terminal(t, "", false)))
+	require.NoError(t, (&ApplyCmd{Yes: true}).applyPlan(t.Context(), plan, ft.terminal(t, "", false)))
 
 	out := ft.out.String()
 	assert.Contains(t, out, "→ tools\n  │ downloading jq\n  │ installed jq\n+ tools  changed")

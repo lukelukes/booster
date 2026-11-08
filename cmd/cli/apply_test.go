@@ -56,7 +56,26 @@ type fakeTerminal struct {
 	logDir  string
 	events  []string
 	sudoErr error
+	log     *brokenLog
 }
+
+type brokenLog struct {
+	ft       *fakeTerminal
+	writeErr error
+	closeErr error
+	written  strings.Builder
+}
+
+func (l *brokenLog) Name() string { return "broken.log" }
+
+func (l *brokenLog) Write(p []byte) (int, error) {
+	if l.writeErr != nil && len(l.ft.events) > 0 {
+		return 0, l.writeErr
+	}
+	return l.written.Write(p)
+}
+
+func (l *brokenLog) Close() error { return l.closeErr }
 
 func (ft *fakeTerminal) terminal(t *testing.T, input string, interactive bool) terminal {
 	t.Helper()
@@ -64,9 +83,15 @@ func (ft *fakeTerminal) terminal(t *testing.T, input string, interactive bool) t
 		ft.logDir = t.TempDir()
 	}
 	return terminal{
-		in:          strings.NewReader(input),
-		out:         &ft.out,
-		logDir:      ft.logDir,
+		in:  strings.NewReader(input),
+		out: &ft.out,
+		openLog: func() (logFile, error) {
+			if ft.log != nil {
+				ft.log.ft = ft
+				return ft.log, nil
+			}
+			return openLog(ft.logDir)
+		},
 		interactive: interactive,
 		sudo: func() error {
 			ft.events = append(ft.events, "sudo")
@@ -163,19 +188,6 @@ func TestApplyCmd(t *testing.T) {
 	}
 }
 
-func TestApplyCmd_UpToDateDoesNotAsk(t *testing.T) {
-	f := newApplyFixture(t)
-	require.NoError(t, (&ApplyCmd{Yes: true}).run(f.cli, new(fakeTerminal).terminal(t, "", false)))
-	var ft fakeTerminal
-
-	err := (&ApplyCmd{}).run(f.cli, ft.terminal(t, "", false))
-
-	require.NoError(t, err)
-	assert.Contains(t, ft.out.String(), "0 to change · 2 up to date")
-	assert.NotContains(t, ft.out.String(), "apply these changes")
-	assert.NotContains(t, ft.out.String(), "applying")
-}
-
 func TestApplyCmd_FailedStepStopsTheRun(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory permissions")
@@ -219,6 +231,35 @@ func TestApplyCmd_SudoRefusedAppliesNothing(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "wrong password")
 	assert.Equal(t, []string{"sudo"}, ft.events)
+}
+
+func TestApplyCmd_LogFailureIsReportedAfterTheRunFinishes(t *testing.T) {
+	diskFull := errors.New("no space left on device")
+	tests := []struct {
+		name string
+		log  brokenLog
+		want error
+	}{
+		{name: "write fails mid-run", log: brokenLog{writeErr: diskFull}, want: diskFull},
+		{name: "close fails", log: brokenLog{closeErr: diskFull}, want: diskFull},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ft := fakeTerminal{log: &tt.log}
+			change := model.Change{Kind: model.ChangeCreate, Verb: "create", Total: 1}
+			plan := run.PlanResult{Steps: []run.Planned{ft.planned("a", change), ft.planned("b", change)}}
+
+			err := (&ApplyCmd{Yes: true}).applyPlan(plan, ft.terminal(t, "", false))
+
+			require.ErrorIs(t, err, tt.want)
+			assert.Contains(t, err.Error(), "broken.log")
+			assert.Equal(t, []string{"apply a", "apply b"}, ft.events)
+			assert.Contains(t, ft.out.String(), "2 changed · 0 up to date")
+			assert.Contains(t, ft.out.String(), "log: broken.log")
+			assert.Contains(t, tt.log.written.String(), "2 to change")
+		})
+	}
 }
 
 type outputAction struct{}

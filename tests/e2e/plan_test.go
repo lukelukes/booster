@@ -49,7 +49,7 @@ func booster(t *testing.T, args ...string) result {
 	t.Helper()
 	home := t.TempDir()
 	cmd := exec.Command(binary, args...)
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_DATA_HOME="+filepath.Join(home, "data"))
+	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_STATE_HOME="+filepath.Join(home, "state"))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

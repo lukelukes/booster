@@ -47,12 +47,7 @@ type result struct {
 
 func booster(t *testing.T, args ...string) result {
 	t.Helper()
-	home := t.TempDir()
-	cmd := exec.Command(binary, args...)
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_STATE_HOME="+filepath.Join(home, "state"))
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	cmd, stdout, stderr := boosterCmd(t, args...)
 
 	err := cmd.Run()
 
@@ -63,6 +58,17 @@ func booster(t *testing.T, args ...string) result {
 		require.NoError(t, err)
 	}
 	return result{code: code, stdout: stdout.String(), stderr: stderr.String()}
+}
+
+func boosterCmd(t *testing.T, args ...string) (cmd *exec.Cmd, stdout, stderr *bytes.Buffer) {
+	t.Helper()
+	home := t.TempDir()
+	cmd = exec.Command(binary, args...)
+	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_STATE_HOME="+filepath.Join(home, "state"))
+	stdout, stderr = &bytes.Buffer{}, &bytes.Buffer{}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	return cmd, stdout, stderr
 }
 
 func writeConfig(t *testing.T, dir, content string) string {

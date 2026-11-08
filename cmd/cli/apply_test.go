@@ -114,8 +114,9 @@ func (ft *fakeTerminal) planned(name string, change model.Change) run.Planned {
 }
 
 type fakeAction struct {
-	name   string
-	events *[]string
+	name    string
+	events  *[]string
+	onApply func() error
 }
 
 func (a *fakeAction) Name() string { return a.name }
@@ -126,6 +127,9 @@ func (a *fakeAction) Check(context.Context) (model.Change, error) {
 
 func (a *fakeAction) Apply(context.Context) error {
 	*a.events = append(*a.events, "apply "+a.name)
+	if a.onApply != nil {
+		return a.onApply()
+	}
 	return nil
 }
 
@@ -215,15 +219,58 @@ func TestApplyCmd_FailedStepStopsTheRun(t *testing.T) {
 	assert.NoFileExists(t, f.link)
 }
 
-func TestApplyCmd_AsksForSudoOnceBeforeApplying(t *testing.T) {
-	var ft fakeTerminal
-	needsSudo := model.Change{Kind: model.ChangeCreate, Verb: "install", NeedsSudo: true}
-	plan := run.PlanResult{Steps: []run.Planned{ft.planned("a", needsSudo), ft.planned("b", needsSudo)}}
+func TestApplyCmd_KeepsSudoAliveOnlyWhileApplying(t *testing.T) {
+	tests := []struct {
+		name       string
+		onApply    func(cancel context.CancelFunc) error
+		wantEvents []string
+		wantErr    string
+		wantOut    string
+	}{
+		{
+			name:       "completed",
+			wantEvents: []string{"sudo", "keepalive start", "apply a", "apply b", "keepalive stop"},
+			wantOut:    "2 changed · 0 up to date",
+		},
+		{
+			name:       "failed",
+			onApply:    func(context.CancelFunc) error { return errors.New("exit status 1") },
+			wantEvents: []string{"sudo", "keepalive start", "apply a", "keepalive stop"},
+			wantErr:    "1 of 2 steps failed",
+			wantOut:    "- b  not run",
+		},
+		{
+			name:       "interrupted",
+			onApply:    func(cancel context.CancelFunc) error { cancel(); return nil },
+			wantEvents: []string{"sudo", "keepalive start", "apply a", "keepalive stop"},
+			wantErr:    "apply interrupted: context canceled",
+			wantOut:    "- b  not run",
+		},
+	}
 
-	err := (&ApplyCmd{Yes: true}).applyPlan(t.Context(), plan, ft.terminal(t, "", false))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var ft fakeTerminal
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			needsSudo := model.Change{Kind: model.ChangeCreate, Verb: "install", NeedsSudo: true}
+			plan := run.PlanResult{Steps: []run.Planned{ft.planned("a", needsSudo), ft.planned("b", needsSudo)}}
+			if tt.onApply != nil {
+				plan.Steps[0].Action.(*fakeAction).onApply = func() error { return tt.onApply(cancel) }
+			}
 
-	require.NoError(t, err)
-	assert.Equal(t, []string{"sudo", "keepalive start", "apply a", "apply b", "keepalive stop"}, ft.events)
+			err := (&ApplyCmd{Yes: true}).applyPlan(ctx, plan, ft.terminal(t, "", false))
+
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tt.wantEvents, ft.events)
+			assert.Contains(t, ft.out.String(), tt.wantOut)
+		})
+	}
 }
 
 func TestApplyCmd_SudoRefusedAppliesNothing(t *testing.T) {

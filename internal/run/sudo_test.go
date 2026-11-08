@@ -10,18 +10,20 @@ import (
 )
 
 type sudoRunner struct {
-	calls chan []string
-	hang  bool
+	calls     chan []string
+	cancelled chan struct{}
+	hang      bool
 }
 
 func newSudoRunner() *sudoRunner {
-	return &sudoRunner{calls: make(chan []string, 10)}
+	return &sudoRunner{calls: make(chan []string, 10), cancelled: make(chan struct{}, 10)}
 }
 
 func (r *sudoRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	r.calls <- append([]string{name}, args...)
 	if r.hang {
 		<-ctx.Done()
+		r.cancelled <- struct{}{}
 		return nil, ctx.Err()
 	}
 	return nil, nil
@@ -55,31 +57,17 @@ func TestKeepSudoAlive_RefreshesOnEveryTick(t *testing.T) {
 }
 
 func TestKeepSudoAlive_StopsRefreshing(t *testing.T) {
-	tests := []struct {
-		name string
-		end  func(stop func(), cancel context.CancelFunc)
-	}{
-		{name: "stop", end: func(stop func(), _ context.CancelFunc) { stop() }},
-		{name: "parent cancelled", end: func(stop func(), cancel context.CancelFunc) { cancel(); stop() }},
-	}
+	runner := newSudoRunner()
+	ticks := make(chan time.Time, 1)
+	stop := KeepSudoAlive(t.Context(), runner, ticks)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			runner := newSudoRunner()
-			ticks := make(chan time.Time, 1)
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			stop := KeepSudoAlive(ctx, runner, ticks)
+	stop()
+	ticks <- time.Now()
 
-			tt.end(stop, cancel)
-			ticks <- time.Now()
-
-			select {
-			case call := <-runner.calls:
-				assert.Fail(t, "refreshed after stopping", call)
-			case <-time.After(50 * time.Millisecond):
-			}
-		})
+	select {
+	case call := <-runner.calls:
+		assert.Fail(t, "refreshed after stopping", call)
+	case <-time.After(50 * time.Millisecond):
 	}
 }
 
@@ -90,23 +78,34 @@ func TestKeepSudoAlive_StopIsSafeToCallTwice(t *testing.T) {
 	stop()
 }
 
-func TestKeepSudoAlive_StopCancelsARefreshInFlight(t *testing.T) {
-	runner := newSudoRunner()
-	runner.hang = true
-	ticks := make(chan time.Time)
-	stop := KeepSudoAlive(t.Context(), runner, ticks)
-	ticks <- time.Now()
-	runner.next(t)
+func TestKeepSudoAlive_CancelsARefreshInFlight(t *testing.T) {
+	tests := []struct {
+		name string
+		end  func(stop func(), cancel context.CancelFunc)
+	}{
+		{name: "stop", end: func(stop func(), _ context.CancelFunc) { go stop() }},
+		{name: "parent cancelled", end: func(_ func(), cancel context.CancelFunc) { cancel() }},
+	}
 
-	stopped := make(chan struct{})
-	go func() {
-		stop()
-		close(stopped)
-	}()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := newSudoRunner()
+			runner.hang = true
+			ticks := make(chan time.Time)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			stop := KeepSudoAlive(ctx, runner, ticks)
+			t.Cleanup(stop)
+			ticks <- time.Now()
+			runner.next(t)
 
-	select {
-	case <-stopped:
-	case <-time.After(time.Second):
-		assert.Fail(t, "stop waited on a hung sudo")
+			tt.end(stop, cancel)
+
+			select {
+			case <-runner.cancelled:
+			case <-time.After(time.Second):
+				assert.Fail(t, "the hung sudo was not cancelled")
+			}
+		})
 	}
 }

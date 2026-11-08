@@ -42,9 +42,7 @@ type logFile interface {
 }
 
 func (c *ApplyCmd) Run(cli *CLI) error {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	return c.run(ctx, cli, terminal{
+	return c.run(context.Background(), cli, terminal{
 		in:          os.Stdin,
 		out:         os.Stdout,
 		openLog:     func() (logFile, error) { return openLog(logDir()) },
@@ -102,6 +100,8 @@ func (c *ApplyCmd) approve(view model.Plan, term terminal) (bool, error) {
 }
 
 func applySteps(ctx context.Context, plan run.PlanResult, view model.Plan, term terminal, log io.Writer) error {
+	ctx, stopSignals := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
 	if view.NeedsSudo() {
 		stop := term.keepSudo(ctx)
 		defer stop()
@@ -111,6 +111,9 @@ func applySteps(ctx context.Context, plan run.PlanResult, view model.Plan, term 
 		screen(e)
 		logged(e)
 	})
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("apply interrupted: %w", err)
+	}
 	if summary.Failed > 0 {
 		return fmt.Errorf("apply: %d of %d steps failed", summary.Failed, summary.Total)
 	}

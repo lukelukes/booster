@@ -27,6 +27,7 @@ var (
 type CLI struct {
 	Config  string     `help:"Path to config file" default:"./bootstrap.yaml" type:"path"`
 	Run     RunCmd     `cmd:"" default:"withargs" help:"Run bootstrap tasks (default)"`
+	Plan    PlanCmd    `cmd:"" help:"Show what would change; exits 2 when changes are pending"`
 	Version VersionCmd `cmd:"" help:"Show version information"`
 }
 
@@ -224,7 +225,11 @@ func main() {
 		kong.UsageOnError(),
 	)
 
-	if err := ctx.Run(&cli); err != nil {
+	err := ctx.Run(&cli)
+	if errors.Is(err, errChangesPending) {
+		os.Exit(2)
+	}
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}

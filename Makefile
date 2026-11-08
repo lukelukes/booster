@@ -36,7 +36,7 @@ test: ## Run unit tests
 
 .PHONY: test-integration
 test-integration: ## Run integration tests
-	go test -race $(TESTFLAGS) ./tests/integration/...
+	go test -race -count=1 $(TESTFLAGS) ./tests/...
 
 .PHONY: test-all
 test-all: test test-integration ## Run all tests

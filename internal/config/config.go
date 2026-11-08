@@ -23,6 +23,7 @@ type VariableDef struct {
 }
 
 type Task struct {
+	Name   string    `yaml:"name,omitempty"`
 	Args   yaml.Node `yaml:"args"`
 	When   *WhenExpr `yaml:"when,omitempty"`
 	Action string    `yaml:"action"`

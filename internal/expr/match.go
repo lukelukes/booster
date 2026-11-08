@@ -39,19 +39,31 @@ type matcher struct {
 	active map[*yaml.Node]bool
 }
 
-func (m matcher) resolve(node *yaml.Node, path string) (*yaml.Node, error) {
-	if node.Kind == yaml.AliasNode {
-		if m.active[node.Alias] {
-			return nil, pathErrorf(path, "alias refers to itself")
-		}
-		return m.resolve(node.Alias, path)
+func isContainer(node *yaml.Node) bool {
+	return node.Kind == yaml.MappingNode || node.Kind == yaml.SequenceNode || node.Kind == yaml.DocumentNode
+}
+
+func (m matcher) enter(node *yaml.Node, path string) (*yaml.Node, func(), error) {
+	node = deref(node)
+	if !isContainer(node) {
+		return node, func() {}, nil
 	}
-	if node.Kind != yaml.MappingNode && node.Kind != yaml.SequenceNode && node.Kind != yaml.DocumentNode {
+	if m.active[node] {
+		return nil, nil, pathErrorf(path, "alias refers to itself")
+	}
+	m.active[node] = true
+	return node, func() { delete(m.active, node) }, nil
+}
+
+func (m matcher) resolve(node *yaml.Node, path string) (*yaml.Node, error) {
+	node, leave, err := m.enter(node, path)
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
+	if !isContainer(node) {
 		return node, nil
 	}
-
-	m.active[node] = true
-	defer delete(m.active, node)
 
 	if node.Kind == yaml.MappingNode && len(node.Content) == 2 && node.Content[0].Value == "match" {
 		return m.resolveMatch(node.Content[1], path+".match")
@@ -93,7 +105,11 @@ func deref(node *yaml.Node) *yaml.Node {
 }
 
 func (m matcher) resolveMatch(block *yaml.Node, path string) (*yaml.Node, error) {
-	block = deref(block)
+	block, leave, err := m.enter(block, path)
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
 	if block.Kind != yaml.MappingNode {
 		return nil, pathErrorf(path, "must be a mapping with 'on', 'cases' and optional 'default'")
 	}
@@ -131,7 +147,13 @@ func (m matcher) resolveMatch(block *yaml.Node, path string) (*yaml.Node, error)
 		return nil, &PathError{Path: path + ".on", Err: err}
 	}
 
-	branch, branchPath, err := selectCase(deref(cases), selector, path+".cases")
+	cases, leaveCases, err := m.enter(cases, path+".cases")
+	if err != nil {
+		return nil, err
+	}
+	defer leaveCases()
+
+	branch, branchPath, err := selectCase(cases, selector, path+".cases")
 	if err != nil {
 		return nil, err
 	}

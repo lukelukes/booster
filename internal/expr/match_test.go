@@ -195,30 +195,6 @@ other: value
 			want: `[{darwin: brew, arch: pacman}, brew]`,
 		},
 		{
-			name:    "rejects a sequence that contains itself",
-			src:     `&loop [a, *loop]`,
-			wantErr: "[1]: alias refers to itself",
-		},
-		{
-			name: "rejects a mapping that contains itself",
-			src: `
-outer: &loop
-  inner: *loop
-`,
-			wantErr: ".outer.inner: alias refers to itself",
-		},
-		{
-			name: "rejects a selected branch that contains its match",
-			src: `
-&loop
-match:
-  on: ${ os }
-  cases:
-    darwin: [*loop]
-`,
-			wantErr: ".match.cases.darwin[0]: alias refers to itself",
-		},
-		{
 			name: "rejects a repeated on",
 			src: `
 match:
@@ -357,6 +333,85 @@ match:
 
 			require.NoError(t, err)
 			assert.Equal(t, decodeNode(t, yamlNode(t, tt.want)), decodeNode(t, got))
+		})
+	}
+}
+
+func TestResolveMatchesRejectsCycles(t *testing.T) {
+	tests := []struct {
+		name     string
+		src      string
+		wantPath string
+	}{
+		{
+			name:     "a sequence that contains itself",
+			src:      `&loop [a, *loop]`,
+			wantPath: "[1][1]",
+		},
+		{
+			name: "a mapping that contains itself",
+			src: `
+outer: &loop
+  inner: *loop
+`,
+			wantPath: ".outer.inner",
+		},
+		{
+			name: "a selected branch that contains its match",
+			src: `
+&loop
+match:
+  on: ${ os }
+  cases:
+    darwin: [*loop]
+`,
+			wantPath: ".match.cases.darwin[0].match",
+		},
+		{
+			name: "a selected branch that matches on its own body",
+			src: `
+match: &body
+  on: ${ os }
+  cases:
+    darwin:
+      match: *body
+`,
+			wantPath: ".match.cases.darwin.match",
+		},
+		{
+			name: "a selected branch that matches on its own cases",
+			src: `
+match:
+  on: ${ os }
+  cases: &cases
+    darwin:
+      match:
+        on: ${ os }
+        cases: *cases
+`,
+			wantPath: ".match.cases.darwin.match.cases",
+		},
+		{
+			name: "a default that matches on its own body",
+			src: `
+match: &body
+  on: ${ os }
+  cases: {arch: a}
+  default:
+    match: *body
+`,
+			wantPath: ".match.default.match",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ResolveMatches(yamlNode(t, tt.src), &Context{OS: "darwin"})
+
+			pathErr, ok := errors.AsType[*PathError](err)
+			require.True(t, ok, "want a *PathError, got %v", err)
+			assert.Equal(t, tt.wantPath, pathErr.Path)
+			assert.EqualError(t, pathErr.Err, "alias refers to itself")
 		})
 	}
 }
